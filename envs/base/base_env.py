@@ -21,7 +21,9 @@ from isaaclab.scene import InteractiveScene
 from isaaclab.sensors import ContactSensor, RayCaster
 from isaaclab.sim import PhysxCfg, SimulationContext
 from isaaclab.utils.buffers import CircularBuffer, DelayBuffer
+from mdp.command_gen import UniformVelHeightCommand, UniformVelHeightCommandCfg
 from rsl_rl.env import VecEnv
+
 
 from envs.base.base_env_config import BaseEnvCfg
 from utils.env_utils.scene import SceneCfg
@@ -62,7 +64,7 @@ class BaseEnv(VecEnv):
         if self.cfg.scene.height_scanner.enable_height_scan:
             self.height_scanner: RayCaster = self.scene.sensors["height_scanner"]
 
-        command_cfg = UniformVelocityCommandCfg(
+        self.command_cfg = UniformVelocityCommandCfg(
             asset_name="robot",
             resampling_time_range=self.cfg.commands.resampling_time_range,
             rel_standing_envs=self.cfg.commands.rel_standing_envs,
@@ -72,7 +74,9 @@ class BaseEnv(VecEnv):
             debug_vis=self.cfg.commands.debug_vis,
             ranges=self.cfg.commands.ranges,
         )
-        self.command_generator = UniformVelocityCommand(cfg=command_cfg, env=self)
+
+        self._create_command_generator()
+
         self.reward_manager = RewardManager(self.cfg.reward, self)
 
         self.init_buffers()
@@ -82,6 +86,9 @@ class BaseEnv(VecEnv):
         if "startup" in self.event_manager.available_modes:
             self.event_manager.apply(mode="startup")
         self.reset(env_ids)
+
+    def _create_command_generator(self):
+        self.command_generator = UniformVelocityCommand(self.command_cfg, self)
 
     def init_buffers(self):
         self.extras = {}
@@ -269,14 +276,42 @@ class BaseEnv(VecEnv):
             actor_obs, _ = self.compute_current_observations()
             noise_vec = torch.zeros_like(actor_obs[0])
             noise_scales = self.cfg.noise.noise_scales
-            noise_vec[:3] = noise_scales.ang_vel * self.obs_scales.ang_vel
-            noise_vec[3:6] = noise_scales.projected_gravity * self.obs_scales.projected_gravity
-            noise_vec[6:9] = 0
-            noise_vec[9 : 9 + self.num_actions] = noise_scales.joint_pos * self.obs_scales.joint_pos
-            noise_vec[9 + self.num_actions : 9 + self.num_actions * 2] = (
-                noise_scales.joint_vel * self.obs_scales.joint_vel
-            )
-            noise_vec[9 + self.num_actions * 2 : 9 + self.num_actions * 3] = 0.0
+
+            cmd_dim = self.command_generator.command.shape[1]
+
+            # actor_obs layout:
+            # [0:3]   ang_vel
+            # [3:6]   projected_gravity
+            # [6:6+cmd_dim] commands
+            # then joint_pos (num_actions)
+            # then joint_vel (num_actions)
+            # then actions   (num_actions)
+
+            idx = 0
+            # ang_vel
+            noise_vec[idx : idx + 3] = noise_scales.ang_vel * self.obs_scales.ang_vel
+            idx += 3
+
+            # projected_gravity
+            noise_vec[idx : idx + 3] = noise_scales.projected_gravity * self.obs_scales.projected_gravity
+            idx += 3
+
+            # commands (no noise)
+            noise_vec[idx : idx + cmd_dim] = 0.0
+            idx += cmd_dim
+
+            # joint_pos
+            noise_vec[idx : idx + self.num_actions] = noise_scales.joint_pos * self.obs_scales.joint_pos
+            idx += self.num_actions
+
+            # joint_vel
+            noise_vec[idx : idx + self.num_actions] = noise_scales.joint_vel * self.obs_scales.joint_vel
+            idx += self.num_actions
+
+            # actions (no noise)
+            noise_vec[idx : idx + self.num_actions] = 0.0
+            idx += self.num_actions
+
             self.noise_scale_vec = noise_vec
 
             if self.cfg.scene.height_scanner.enable_height_scan:
@@ -295,6 +330,8 @@ class BaseEnv(VecEnv):
         self.critic_obs_buffer = CircularBuffer(
             max_len=self.cfg.robot.critic_obs_history_length, batch_size=self.num_envs, device=self.device
         )
+
+
 
     def update_terrain_levels(self, env_ids):
         distance = torch.norm(self.robot.data.root_pos_w[env_ids, :2] - self.scene.env_origins[env_ids, :2], dim=1)
