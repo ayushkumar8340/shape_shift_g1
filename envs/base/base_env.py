@@ -63,6 +63,11 @@ class BaseEnv(VecEnv):
         self.contact_sensor: ContactSensor = self.scene.sensors["contact_sensor"]
         if self.cfg.scene.height_scanner.enable_height_scan:
             self.height_scanner: RayCaster = self.scene.sensors["height_scanner"]
+        
+        # print("--- LIVE G1 LINK NAMES ---")
+        # print(self.scene["robot"].data.body_names)
+        # print("--- LIVE G1 JOINT NAMES ---")
+        # print(self.scene["robot"].data.joint_names)
 
         self.command_cfg = UniformVelocityCommandCfg(
             asset_name="robot",

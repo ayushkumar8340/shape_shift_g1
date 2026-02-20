@@ -1,12 +1,16 @@
 import numpy as np
 from sim2real.utils.rot_helper import get_gravity_orientation, transform_imu_data
-from sim2real.utils.remote_controller import RemoteController
+from sim2real.utils.remote_controller import RemoteController, KeyMap
 
 
 class Observations:
     def __init__(self, config):
         self.config = config
         self.remote = RemoteController()
+        self.up_flag = False
+        self.down_flag = False
+        self.start_height = 0.78
+        self.step_height = 0.03
 
         self.joint_pos = np.zeros(config.num_actions, dtype=np.float32)
         self.joint_vel = np.zeros(config.num_actions, dtype=np.float32)
@@ -21,6 +25,7 @@ class Observations:
                 self.config.command_range["lin_vel_x"][0],
                 self.config.command_range["lin_vel_y"][0],
                 self.config.command_range["ang_vel_z"][0],
+                self.config.command_range["height"][0]
             ],
             dtype=np.float32,
         )
@@ -29,6 +34,7 @@ class Observations:
                 self.config.command_range["lin_vel_x"][1],
                 self.config.command_range["lin_vel_y"][1],
                 self.config.command_range["ang_vel_z"][1],
+                self.config.command_range["height"][1]
             ],
             dtype=np.float32,
         )
@@ -67,20 +73,37 @@ class Observations:
         joint_vel = self.joint_vel * self.config.dof_vel_scale
         ang_vel = ang_vel * self.config.ang_vel_scale
 
+        if self.remote.button[KeyMap.up] == 1 and self.up_flag == False:
+            self.start_height += self.step_height
+            self.up_flag = True
+        elif self.remote.button[KeyMap.down] == 1 and self.down_flag == False:
+            self.start_height -= self.step_height
+            self.down_flag = True
+
+        elif self.remote.button[KeyMap.up] == 0 and self.up_flag == True:
+            self.up_flag = False
+        elif self.remote.button[KeyMap.down] == 0 and self.down_flag == True:
+            self.down_flag = False
+        
+
         command = np.array(
-            [self.remote.ly, -self.remote.lx, -self.remote.rx],
+            [self.remote.ly, -self.remote.lx, -self.remote.rx, self.start_height],
             dtype=np.float32,
         )
+
+
         command *= self.config.command_scale
         command = np.clip(command, self.clip_min_command, self.clip_max_command)
+
+        print("clipped command: ", command)
 
         num_actions = self.config.num_actions
         self.current_obs[:3] = ang_vel
         self.current_obs[3:6] = gravity_orientation
-        self.current_obs[6:9] = command
-        self.current_obs[9 : 9 + num_actions] = joint_pos
-        self.current_obs[9 + num_actions : 9 + num_actions * 2] = joint_vel
-        self.current_obs[9 + num_actions * 2 : 9 + num_actions * 3] = self.action
+        self.current_obs[6:10] = command
+        self.current_obs[10 : 10 + num_actions] = joint_pos
+        self.current_obs[10 + num_actions : 10 + num_actions * 2] = joint_vel
+        self.current_obs[10 + num_actions * 2 : 10 + num_actions * 3] = self.action
 
         if self.first_run:
             self.history[:] = self.current_obs.reshape(1, -1)

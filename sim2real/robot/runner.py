@@ -48,6 +48,7 @@ class PolicyRunner:
         self.obs.set_last_action(action)
 
         target_dof_pos = self.config.default_joint_pos + action * self.config.action_scale
+        # Uncomment this to write to the robot
         self.ll.set_target_positions(target_dof_pos)
 
         if self.obs.remote.button[KeyMap.select] == 1:

@@ -1,17 +1,7 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
-# All rights reserved.
-# Original code is licensed under BSD-3-Clause.
-#
-# Copyright (c) 2025-2026, The Legged Lab Project Developers.
-# All rights reserved.
-# Modifications are licensed under BSD-3-Clause.
-#
-# This file contains code derived from Isaac Lab Project (BSD-3-Clause license)
-# with modifications by Legged Lab Project (BSD-3-Clause license).
-
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers.scene_entity_cfg import SceneEntityCfg
 from isaaclab.utils import configclass
+
 
 import mdp as mdp
 from assets.unitree import G1_CFG
@@ -31,25 +21,15 @@ from terrains import GRAVEL_TERRAINS_CFG, ROUGH_TERRAINS_CFG
 
 @configclass
 class G1CrouchWalkingRewardCfg(RewardCfg):
-    """Full walking reward stack + a commanded body-height tracking reward.
-
-    IMPORTANT: This assumes your command generator outputs a 4D command:
-        [vx, vy, yaw(or heading), target_height_m]
-    and the target height is command[:, 3].
-    """
-
-    # ---- tracking (same as walking) ----
     track_lin_vel_xy_exp = RewTerm(func=mdp.track_lin_vel_xy_yaw_frame_exp, weight=1.0, params={"std": 0.5})
     track_ang_vel_z_exp = RewTerm(func=mdp.track_ang_vel_z_world_exp, weight=1.0, params={"std": 0.5})
 
-    # ---- NEW: height tracking ----
     track_base_height_exp = RewTerm(
         func=mdp.track_base_height_exp,
         weight=2.0,
         params={"std": 0.08},
     )
 
-    # ---- stabilization / penalties (same as walking) ----
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     energy = RewTerm(func=mdp.energy, weight=-1e-3)
@@ -110,37 +90,36 @@ class G1CrouchWalkingRewardCfg(RewardCfg):
 
     dof_pos_limits = RewTerm(func=mdp.joint_pos_limits, weight=-2.0)
 
-    # joint_deviation_hip = RewTerm(
-    #     func=mdp.joint_deviation_l1,
-    #     weight=-0.15,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg(
-    #             "robot",
-    #             joint_names=[".*_hip_yaw.*", ".*_hip_roll.*", ".*_shoulder_pitch.*", ".*_elbow.*"],
-    #         )
-    #     },
-    # )
-
-    # joint_deviation_arms = RewTerm(
-    #     func=mdp.joint_deviation_l1,
-    #     weight=-0.2,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg(
-    #             "robot",
-    #             joint_names=[".*waist.*", ".*_shoulder_roll.*", ".*_shoulder_yaw.*", ".*_wrist.*"],
-    #         )
-    #     },
-    # )
-
-    joint_deviation_legs = RewTerm(
+    joint_deviation_hip_stability = RewTerm(
         func=mdp.joint_deviation_l1,
-        weight=-0.05,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*_ankle.*",".*_elbow.*",".*_wrist.*"])},
+        weight=-0.5, 
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[".*_hip_roll.*", ".*_hip_yaw.*"],
+            )
+        },
     )
 
+    feet_flat = RewTerm(
+        func=mdp.feet_flat_orientation,
+        weight=-2.5, 
+        params={"asset_cfg": SceneEntityCfg("robot", body_names=".*ankle_roll.*")},
+    )
 
-
-
+    joint_deviation_arms_strict = RewTerm(
+        func=mdp.joint_deviation_l1,
+        weight=-0.5,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[
+                    ".*_shoulder_pitch.*", ".*_shoulder_roll.*", 
+                    ".*_shoulder_yaw.*", ".*_elbow.*", ".*_wrist.*"
+                ],
+            )
+        },
+    )
 
 
 @configclass
@@ -182,8 +161,6 @@ class G1CrouchRoughEnvCfg(G1CrouchFlatEnvCfg):
         self.reward.track_ang_vel_z_exp.weight = 1.5
         self.reward.lin_vel_z_l2.weight = -0.25
 
-        # Optional: height tracking often needs to be a bit stronger on rough
-        # self.reward.track_base_height_exp.weight = 2.5
 
 
 @configclass
@@ -199,3 +176,8 @@ class G1CrouchRoughAgentCfg(BaseAgentCfg):
         self.policy.rnn_hidden_size = 256
         self.policy.rnn_num_layers = 1
         self.policy.rnn_type = "lstm"
+
+
+
+# Joint names
+# ['left_hip_pitch_joint', 'right_hip_pitch_joint', 'waist_yaw_joint', 'left_hip_roll_joint', 'right_hip_roll_joint', 'waist_roll_joint', 'left_hip_yaw_joint', 'right_hip_yaw_joint', 'waist_pitch_joint', 'left_knee_joint', 'right_knee_joint', 'left_shoulder_pitch_joint', 'right_shoulder_pitch_joint', 'left_ankle_pitch_joint', 'right_ankle_pitch_joint', 'left_shoulder_roll_joint', 'right_shoulder_roll_joint', 'left_ankle_roll_joint', 'right_ankle_roll_joint', 'left_shoulder_yaw_joint', 'right_shoulder_yaw_joint', 'left_elbow_joint', 'right_elbow_joint', 'left_wrist_roll_joint', 'right_wrist_roll_joint', 'left_wrist_pitch_joint', 'right_wrist_pitch_joint', 'left_wrist_yaw_joint', 'right_wrist_yaw_joint']
