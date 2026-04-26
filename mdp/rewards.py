@@ -1,14 +1,3 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
-# All rights reserved.
-# Original code is licensed under BSD-3-Clause.
-#
-# Copyright (c) 2025-2026, The Legged Lab Project Developers.
-# All rights reserved.
-# Modifications are licensed under BSD-3-Clause.
-#
-# This file contains code derived from Isaac Lab Project (BSD-3-Clause license)
-# with modifications by Legged Lab Project (BSD-3-Clause license).
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -165,3 +154,14 @@ def feet_too_near_humanoid(
     feet_pos = asset.data.body_pos_w[:, asset_cfg.body_ids, :]
     distance = torch.norm(feet_pos[:, 0] - feet_pos[:, 1], dim=-1)
     return (threshold - distance).clamp(min=0)
+
+
+def desired_contacts(env, threshold: float, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    net_contact_forces = contact_sensor.data.net_forces_w_history
+    is_contact = torch.max(
+        torch.norm(net_contact_forces[:, :, sensor_cfg.body_ids], dim=-1),
+        dim=1,
+    )[0] > threshold
+
+    return torch.sum(is_contact.float(), dim=1)

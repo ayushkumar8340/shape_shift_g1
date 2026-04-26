@@ -168,3 +168,23 @@ G1_CFG = ArticulationCfg(
         ),
     },
 )
+
+
+G1_KNEE_WALK_CFG = G1_CFG.replace(
+    init_state=G1_CFG.init_state.replace(
+        pos=(0.0, 0.0, 0.68),  
+        joint_pos={
+            **G1_CFG.init_state.joint_pos,
+
+            # replace these with your actual knee-walking pose
+            ".*_hip_pitch_joint": 0.0,
+            ".*_knee_joint": 1.507,
+            ".*_ankle_pitch_joint": 0.523599,
+
+            # optional if your kneeling pose needs these
+            ".*_hip_roll_joint": 0.0,
+            ".*_hip_yaw_joint": 0.0,
+            ".*_ankle_roll_joint": 0.0,
+        },
+    )
+)

@@ -274,6 +274,28 @@ class BaseEnv(VecEnv):
         )
         time_out_buf = self.episode_length_buf >= self.max_episode_length
         reset_buf |= time_out_buf
+
+        ## For debug to print what body contact causes the reset.
+        # if torch.any(reset_buf):
+        #     env_ids = reset_buf.nonzero(as_tuple=False).flatten()
+
+        #     # get body ids and names
+        #     body_ids = self.termination_contact_cfg.body_ids
+        #     body_names = [self.robot.data.body_names[i] for i in body_ids]
+
+        #     forces = self.contact_sensor.data.net_forces_w_history
+
+        #     for env_id in env_ids[:5]:  # limit prints
+        #         contact_forces = torch.norm(forces[env_id, :, body_ids], dim=-1)
+        #         max_force_per_body = torch.max(contact_forces, dim=0)[0]
+
+        #         triggered = max_force_per_body > 1.0
+
+        #         if torch.any(triggered):
+        #             print(f"\n[TERMINATION] env {env_id.item()}")
+        #             for i, flag in enumerate(triggered):
+        #                 if flag:
+        #                     print(f"  -> {body_names[i]} | force={max_force_per_body[i].item():.3f}")
         return reset_buf, time_out_buf
 
     def init_obs_buffer(self):

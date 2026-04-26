@@ -155,7 +155,6 @@ class G1CrouchRoughEnvCfg(G1CrouchFlatEnvCfg):
         self.robot.actor_obs_history_length = 1
         self.robot.critic_obs_history_length = 1
 
-        # Keep your rough tuning pattern (same as your walking rough env)
         self.reward.feet_air_time.weight = 0.25
         self.reward.track_lin_vel_xy_exp.weight = 1.5
         self.reward.track_ang_vel_z_exp.weight = 1.5
