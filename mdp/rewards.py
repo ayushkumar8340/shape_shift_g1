@@ -16,7 +16,7 @@ def track_lin_vel_xy_yaw_frame_exp(
     env: BaseEnv, std: float, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
     asset: Articulation = env.scene[asset_cfg.name]
-    vel_yaw = math_utils.quat_apply_inverse(
+    vel_yaw = math_utils.quat_rotate_inverse(
         math_utils.yaw_quat(asset.data.root_quat_w), asset.data.root_lin_vel_w[:, :3]
     )
     lin_vel_error = torch.sum(torch.square(env.command_generator.command[:, :2] - vel_yaw[:, :2]), dim=1)
@@ -94,10 +94,9 @@ def feet_air_time_positive_biped(env: BaseEnv, threshold: float, sensor_cfg: Sce
     single_stance = torch.sum(in_contact.int(), dim=1) == 1
     reward = torch.min(torch.where(single_stance.unsqueeze(-1), in_mode_time, 0.0), dim=1)[0]
     reward = torch.clamp(reward, max=threshold)
-    # no reward for zero command
-    reward *= (
-        torch.norm(env.command_generator.command[:, :2], dim=1) + torch.abs(env.command_generator.command[:, 2])
-    ) > 0.1
+    # Reward stepping only if we are far from the target
+    dist = torch.norm(env.command_generator.command, dim=-1)
+    reward *= (dist > 0.5)
     return reward
 
 
@@ -131,7 +130,7 @@ def joint_deviation_l1(env: BaseEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg(
 
 def body_orientation_l2(env: BaseEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     asset: Articulation = env.scene[asset_cfg.name]
-    body_orientation = math_utils.quat_apply_inverse(
+    body_orientation = math_utils.quat_rotate_inverse(
         asset.data.body_quat_w[:, asset_cfg.body_ids[0], :], asset.data.GRAVITY_VEC_W
     )
     return torch.sum(torch.square(body_orientation[:, :2]), dim=1)
@@ -165,3 +164,36 @@ def desired_contacts(env, threshold: float, sensor_cfg: SceneEntityCfg) -> torch
     )[0] > threshold
 
     return torch.sum(is_contact.float(), dim=1)
+
+def track_position_exp(env: BaseEnv, sigma: float = 1.0) -> torch.Tensor:
+    rel_pos = env.command_generator.command
+    dist = torch.norm(rel_pos, dim=-1)
+    dist_outside = torch.clamp(dist - 0.5, min=0.0)
+    return torch.exp(-torch.square(dist_outside) / sigma)
+
+def stop_at_target_exp(env: BaseEnv, dist_threshold: float = 0.5, sigma: float = 0.2) -> torch.Tensor:
+    rel_pos = env.command_generator.command
+    dist = torch.norm(rel_pos, dim=-1)
+    lin_vel = env.robot.data.root_lin_vel_w
+    vel_sq = torch.sum(lin_vel[:, :2] ** 2, dim=-1)
+    return (dist < dist_threshold) * torch.exp(-vel_sq / sigma)
+
+def progress_towards_target(env: BaseEnv) -> torch.Tensor:
+    rel_pos_w = env.command_generator.target_pos_w - env.robot.data.root_pos_w
+    dist = torch.norm(rel_pos_w[:, :2], dim=-1)
+    target_dir_w = rel_pos_w[:, :2] / (dist.unsqueeze(-1) + 1e-5)
+    lin_vel_w = env.robot.data.root_lin_vel_w[:, :2]
+    vel_towards_target = torch.sum(lin_vel_w * target_dir_w, dim=-1)
+    vel_towards_target = torch.clamp(vel_towards_target, min=-2.0, max=1.0)
+    return vel_towards_target * (dist > 0.5).float()
+
+def face_target_exp(env: BaseEnv, sigma: float = 0.5) -> torch.Tensor:
+    dist = torch.norm(env.command_generator.command, dim=-1)
+    heading_error = env.command_generator.get_heading_error().squeeze(-1)
+    is_far = (dist > 0.5).float()
+    return torch.exp(-torch.square(heading_error) / sigma) * is_far
+
+def penalize_wobble_at_target(env: BaseEnv, dist_threshold: float = 0.5) -> torch.Tensor:
+    dist = torch.norm(env.command_generator.command, dim=-1)
+    joint_vel_sq = torch.sum(torch.square(env.robot.data.joint_vel), dim=-1)
+    return (dist < dist_threshold).float() * joint_vel_sq

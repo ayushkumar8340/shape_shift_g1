@@ -21,7 +21,7 @@ from isaaclab.scene import InteractiveScene
 from isaaclab.sensors import ContactSensor, RayCaster
 from isaaclab.sim import PhysxCfg, SimulationContext
 from isaaclab.utils.buffers import CircularBuffer, DelayBuffer
-from mdp.command_gen import UniformVelHeightCommand, UniformVelHeightCommandCfg
+from mdp.command_gen import TargetPositionCommand, TargetPositionCommandCfg
 from rsl_rl.env import VecEnv
 
 
@@ -64,21 +64,10 @@ class BaseEnv(VecEnv):
         if self.cfg.scene.height_scanner.enable_height_scan:
             self.height_scanner: RayCaster = self.scene.sensors["height_scanner"]
         
-        # print("--- LIVE G1 LINK NAMES ---")
-        # print(self.scene["robot"].data.body_names)
-        # print("--- LIVE G1 JOINT NAMES ---")
-        # print(self.scene["robot"].data.joint_names)
-
-        self.command_cfg = UniformVelocityCommandCfg(
-            asset_name="robot",
-            resampling_time_range=self.cfg.commands.resampling_time_range,
-            rel_standing_envs=self.cfg.commands.rel_standing_envs,
-            rel_heading_envs=self.cfg.commands.rel_heading_envs,
-            heading_command=self.cfg.commands.heading_command,
-            heading_control_stiffness=self.cfg.commands.heading_control_stiffness,
-            debug_vis=self.cfg.commands.debug_vis,
-            ranges=self.cfg.commands.ranges,
-        )
+        print("--- LIVE G1 LINK NAMES ---")
+        print(self.scene["robot"].data.body_names)
+        print("--- LIVE G1 JOINT NAMES ---")
+        print(self.scene["robot"].data.joint_names)
 
         self._create_command_generator()
 
@@ -92,8 +81,13 @@ class BaseEnv(VecEnv):
             self.event_manager.apply(mode="startup")
         self.reset(env_ids)
 
+        if not self.headless and getattr(self.cfg.commands, "debug_vis", False):
+            from isaacsim.util.debug_draw import _debug_draw as omni_debug_draw
+            self.draw_interface = omni_debug_draw.acquire_debug_draw_interface()
+
     def _create_command_generator(self):
-        self.command_generator = UniformVelocityCommand(self.command_cfg, self)
+        self.command_cfg = TargetPositionCommandCfg()
+        self.command_generator = TargetPositionCommand(self.command_cfg, self)
 
     def init_buffers(self):
         self.extras = {}
@@ -242,6 +236,8 @@ class BaseEnv(VecEnv):
 
         if not self.headless:
             self.sim.render()
+            if getattr(self.cfg.commands, "debug_vis", False) and hasattr(self, "draw_interface"):
+                self._draw_debug_vis()
 
         self.episode_length_buf += 1
         self.command_generator.compute(self.step_dt)
@@ -257,6 +253,34 @@ class BaseEnv(VecEnv):
         self.extras["observations"] = {"critic": critic_obs}
 
         return actor_obs, reward_buf, self.reset_buf, self.extras
+
+    def _draw_debug_vis(self):
+        """Draws target positions and velocity vectors in the simulator."""
+        self.draw_interface.clear_points()
+        self.draw_interface.clear_lines()
+
+        root_pos = self.robot.data.root_pos_w
+        root_vel = self.robot.data.root_lin_vel_w
+        
+        target_pos = self.command_generator.target_pos_w.clone()
+        target_pos[:, 2] = 0.05  # Hover slightly above ground so it doesn't clip
+        
+        target_vec = target_pos - root_pos
+        target_vec_norm = target_vec / (torch.norm(target_vec, dim=-1, keepdim=True) + 1e-5)
+        
+        points_list = target_pos.tolist()
+        starts_list = root_pos.tolist()
+        vel_ends_list = (root_pos + root_vel * 0.5).tolist() 
+        dir_ends_list = (root_pos + target_vec_norm * 0.5).tolist() 
+        
+        # Draw red dot at the target
+        self.draw_interface.draw_points(points_list, [(1.0, 0.0, 0.0, 1.0)] * self.num_envs, [10.0] * self.num_envs)
+        
+        # Draw blue line for current velocity
+        self.draw_interface.draw_lines(starts_list, vel_ends_list, [(0.0, 0.0, 1.0, 1.0)] * self.num_envs, [2.0] * self.num_envs)
+        
+        # Draw green line for direction to target
+        self.draw_interface.draw_lines(starts_list, dir_ends_list, [(0.0, 1.0, 0.0, 1.0)] * self.num_envs, [2.0] * self.num_envs)
 
     def check_reset(self):
         net_contact_forces = self.contact_sensor.data.net_forces_w_history

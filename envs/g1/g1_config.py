@@ -31,8 +31,12 @@ from terrains import GRAVEL_TERRAINS_CFG, ROUGH_TERRAINS_CFG
 
 @configclass
 class G1RewardCfg(RewardCfg):
-    track_lin_vel_xy_exp = RewTerm(func=mdp.track_lin_vel_xy_yaw_frame_exp, weight=1.0, params={"std": 0.5})
-    track_ang_vel_z_exp = RewTerm(func=mdp.track_ang_vel_z_world_exp, weight=1.0, params={"std": 0.5})
+    track_pos = RewTerm(func=mdp.track_position_exp, weight=2.0, params={"sigma": 1.0})
+    stop_at_target = RewTerm(func=mdp.stop_at_target_exp, weight=5.0, params={"dist_threshold": 0.35, "sigma": 0.2})
+    move_to_target = RewTerm(func=mdp.progress_towards_target, weight=1.5)
+    face_target = RewTerm(func=mdp.face_target_exp, weight=1.5, params={"sigma": 0.5})
+    stand_still = RewTerm(func=mdp.penalize_wobble_at_target, weight=-0.5, params={"dist_threshold": 0.35})
+
     lin_vel_z_l2 = RewTerm(func=mdp.lin_vel_z_l2, weight=-1.0)
     ang_vel_xy_l2 = RewTerm(func=mdp.ang_vel_xy_l2, weight=-0.05)
     energy = RewTerm(func=mdp.energy, weight=-1e-3)
@@ -143,8 +147,6 @@ class G1RoughEnvCfg(G1FlatEnvCfg):
         self.robot.actor_obs_history_length = 1
         self.robot.critic_obs_history_length = 1
         self.reward.feet_air_time.weight = 0.25
-        self.reward.track_lin_vel_xy_exp.weight = 1.5
-        self.reward.track_ang_vel_z_exp.weight = 1.5
         self.reward.lin_vel_z_l2.weight = -0.25
 
 

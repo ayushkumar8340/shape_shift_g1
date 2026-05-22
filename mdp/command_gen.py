@@ -1,5 +1,6 @@
 import torch
 from isaaclab.utils import configclass
+import isaaclab.utils.math as math_utils
 import math
 from dataclasses import MISSING
 
@@ -69,3 +70,54 @@ class UniformVelHeightCommand:
         if self.cfg.rel_standing_envs > 0.0:
             mask = torch.rand(n, device=self.device) < self.cfg.rel_standing_envs
             self.command[env_ids[mask], 0:3] = 0.0
+
+class TargetPositionCommandCfg:
+    class Ranges:
+        pos_x = (1.5, 3.0)  
+        pos_y = (-1.0, 1.0) 
+    ranges = Ranges()
+    resampling_time_range = (10.0, 15.0)
+
+class TargetPositionCommand:
+    def __init__(self, cfg, env):
+        self.cfg = cfg
+        self.env = env
+        self.device = env.device
+        self.num_envs = env.num_envs
+        self.target_pos_w = torch.zeros((self.num_envs, 3), device=self.device)
+
+    def resample(self, env_ids):
+        current_pos = self.env.robot.data.root_pos_w[env_ids]
+        
+        rand_x = torch.rand(len(env_ids), device=self.device) * (self.cfg.ranges.pos_x[1] - self.cfg.ranges.pos_x[0]) + self.cfg.ranges.pos_x[0]
+        rand_y = torch.rand(len(env_ids), device=self.device) * (self.cfg.ranges.pos_y[1] - self.cfg.ranges.pos_y[0]) + self.cfg.ranges.pos_y[0]
+        
+        self.target_pos_w[env_ids, 0] = current_pos[:, 0] + rand_x
+        self.target_pos_w[env_ids, 1] = current_pos[:, 1] + rand_y
+        self.target_pos_w[env_ids, 2] = 0.0
+
+    def reset(self, env_ids=None):
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+        self.resample(env_ids)
+
+    def compute(self, dt: float):
+        """Called during env.step() - we don't need time-based updates for a static target."""
+        pass
+
+    @property
+    def command(self):
+        """Returns [dx_local, dy_local]. This goes straight into your actor observations automatically!"""
+        root_pos = self.env.robot.data.root_pos_w
+        root_quat = self.env.robot.data.root_quat_w
+        
+        rel_pos_w = self.target_pos_w - root_pos
+        rel_pos_local = math_utils.quat_rotate_inverse(root_quat, rel_pos_w)
+        
+        return rel_pos_local[:, :2]
+
+    def get_heading_error(self):
+        """Used strictly for the face_target reward calculation."""
+        rel_pos_local = self.command
+        heading_err = torch.atan2(rel_pos_local[:, 1], rel_pos_local[:, 0])
+        return heading_err.unsqueeze(-1)

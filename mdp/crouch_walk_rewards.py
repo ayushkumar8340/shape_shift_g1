@@ -22,6 +22,6 @@ def feet_flat_orientation(env, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     gravity_vec = asset.data.GRAVITY_VEC_W
     num_feet = len(asset_cfg.body_ids)
     gravity_expanded = gravity_vec.unsqueeze(1).repeat(1, num_feet, 1)
-    projected_gravity_foot = math_utils.quat_apply_inverse(foot_quat, gravity_expanded)
+    projected_gravity_foot = math_utils.quat_rotate_inverse(foot_quat, gravity_expanded)
     
     return torch.sum(torch.square(projected_gravity_foot[:, :, :2]), dim=(1, 2))
