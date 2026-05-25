@@ -121,3 +121,37 @@ class TargetPositionCommand:
         rel_pos_local = self.command
         heading_err = torch.atan2(rel_pos_local[:, 1], rel_pos_local[:, 0])
         return heading_err.unsqueeze(-1)
+
+
+class DribbleCommandCfg:
+    pass
+
+class DribbleCommand:
+    def __init__(self, cfg, env):
+        self.cfg = cfg
+        self.env = env
+        self.device = env.device
+        self.num_envs = env.num_envs
+
+    def reset(self, env_ids=None):
+        pass
+
+    def compute(self, dt: float):
+        pass
+
+    @property
+    def command(self):
+        """Returns [dx, dy, dz, vx, vy, vz] of the ball in the robot's local frame."""
+        ball = self.env.scene["ball"]
+        robot = self.env.scene["robot"]
+
+        # 1. Relative Position
+        rel_pos_w = ball.data.root_pos_w - robot.data.root_pos_w
+        rel_pos_local = math_utils.quat_rotate_inverse(robot.data.root_quat_w, rel_pos_w)
+
+        # 2. Relative Velocity
+        rel_vel_w = ball.data.root_lin_vel_w
+        rel_vel_local = math_utils.quat_rotate_inverse(robot.data.root_quat_w, rel_vel_w)
+
+        # 3. Combine them into a 6D command vector
+        return torch.cat([rel_pos_local, rel_vel_local], dim=-1)

@@ -197,3 +197,89 @@ def penalize_wobble_at_target(env: BaseEnv, dist_threshold: float = 0.5) -> torc
     dist = torch.norm(env.command_generator.command, dim=-1)
     joint_vel_sq = torch.sum(torch.square(env.robot.data.joint_vel), dim=-1)
     return (dist < dist_threshold).float() * joint_vel_sq
+
+def ball_under_hand_xy_tanh(env: BaseEnv, std: float = 0.1, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Rewards keeping the right wrist directly above the ball in the X/Y plane."""
+    robot = env.scene["robot"]
+    ball = env.scene["ball"]
+
+    # Extract only X and Y coordinates
+    wrist_pos_xy = robot.data.body_pos_w[:, asset_cfg.body_ids[0], :2]
+    ball_pos_xy = ball.data.root_pos_w[:, :2]
+
+    dist_xy = torch.norm(wrist_pos_xy - ball_pos_xy, dim=-1)
+    return 1.0 - torch.tanh(dist_xy / std)
+
+def ball_bounce_activity(env: BaseEnv, max_reward_vel: float = 3.0) -> torch.Tensor:
+    """Rewards the ball for having vertical kinetic energy (moving up or down), capped at a natural speed."""
+    ball = env.scene["ball"]
+    vel_z = torch.abs(ball.data.root_lin_vel_w[:, 2])
+    # Cap the reward so hitting it harder doesn't yield infinite points
+    return torch.clamp(vel_z, max=max_reward_vel)
+
+def dribble_strike(env: BaseEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Rewards the hand for moving downwards while physically touching the ball."""
+    robot = env.scene["robot"]
+    ball = env.scene["ball"]
+
+    # Track the right hand specifically
+    hand_pos = robot.data.body_pos_w[:, asset_cfg.body_ids[0], :]
+    hand_vel = robot.data.body_lin_vel_w[:, asset_cfg.body_ids[0], :]
+    ball_pos = ball.data.root_pos_w
+
+    dist = torch.norm(hand_pos - ball_pos, dim=-1) - 0.125   # Subtract ball radius since the ball_pos is with respect to the CoM of the ball
+    
+    # Ball radius is 0.125m. Contact occurs when distance is ~0.13m to 0.15m.
+    is_touching = (dist < 0.10).float()     # 0.12
+
+    # Get downward velocity of the hand (caps at 2.0 m/s so it doesn't over-learn)
+    push_down_vel = torch.clamp(-hand_vel[:, 2], min=0.0, max=2.0)
+
+    # Only rewards if touching AND pushing down. Prevents "pinning" the ball to the floor.
+    return is_touching * push_down_vel
+
+def penalize_pinning(env: BaseEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Punishes the robot for resting its hand on the ball without letting it bounce."""
+    robot = env.scene["robot"]
+    ball = env.scene["ball"]
+    
+    hand_pos = robot.data.body_pos_w[:, asset_cfg.body_ids[0], :]
+    dist = torch.norm(hand_pos - ball.data.root_pos_w, dim=-1) - 0.125
+    is_touching = (dist < 0.10).float()
+    
+    # If the hand is touching the ball, but the ball has almost ZERO vertical velocity, it is pinning it!
+    ball_vel_z = torch.abs(ball.data.root_lin_vel_w[:, 2])
+    is_pinned = (ball_vel_z < 0.5).float()
+    
+    return is_touching * is_pinned
+
+def wild_dribbling(env: BaseEnv, speed_limit: float = 4.0) -> torch.Tensor:
+    """Punishes the robot if it spikes the ball at unnatural speeds."""
+    ball = env.scene["ball"]
+    vel_z = torch.abs(ball.data.root_lin_vel_w[:, 2])
+    # Returns 0 if under limit, scales up linearly if exceeded
+    return torch.where(vel_z > speed_limit, vel_z - speed_limit, 0.0)
+
+def ball_xy_drift(env: BaseEnv) -> torch.Tensor:
+    """Punishes the ball for moving horizontally (rolling or bouncing away)."""
+    ball = env.scene["ball"]
+    vel_xy = ball.data.root_lin_vel_w[:, :2]
+    return torch.sum(torch.square(vel_xy), dim=-1)
+
+def penalize_lateral_lean(env: BaseEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Mathematically forces the spine to remain perfectly vertical by keeping the head over the pelvis."""
+    robot = env.scene["robot"]
+    
+    # Requires asset_cfg to pass head (index 0) and pelvis (index 1)
+    head_pos = robot.data.body_pos_w[:, asset_cfg.body_ids[0], :]
+    pelvis_pos = robot.data.body_pos_w[:, asset_cfg.body_ids[1], :]
+    
+    # Calculate the 2D drift in the X/Y plane. If the head drifts sideways from the pelvis, it is leaning!
+    xy_drift = torch.norm(head_pos[:, :2] - pelvis_pos[:, :2], dim=-1)
+    return xy_drift
+
+def penalize_lifted_feet(env: BaseEnv, max_height: float = 0.08, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    robot = env.scene["robot"]
+    foot_z = robot.data.body_pos_w[:, asset_cfg.body_ids, 2]
+    penalty = torch.where(foot_z > max_height, foot_z - max_height, 0.0)
+    return torch.sum(penalty, dim=1)

@@ -236,8 +236,8 @@ class BaseEnv(VecEnv):
 
         if not self.headless:
             self.sim.render()
-            if getattr(self.cfg.commands, "debug_vis", False) and hasattr(self, "draw_interface"):
-                self._draw_debug_vis()
+            # if getattr(self.cfg.commands, "debug_vis", False) and hasattr(self, "draw_interface"):
+            #     self._draw_debug_vis()
 
         self.episode_length_buf += 1
         self.command_generator.compute(self.step_dt)
