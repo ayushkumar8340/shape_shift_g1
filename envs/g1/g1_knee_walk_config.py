@@ -5,19 +5,19 @@ from isaaclab.utils import configclass
 import mdp as mdp
 from assets.unitree import G1_KNEE_WALK_CFG
 from envs.base.base_env_config import BaseAgentCfg, BaseEnvCfg, RewardCfg
-from terrains import GRAVEL_TERRAINS_CFG, ROUGH_TERRAINS_CFG
+from terrains import GRAVEL_TERRAINS_CFG, ROUGH_TERRAINS_CFG, FLAT_TERRAINS_CFG
 
 
 @configclass
 class G1KneeWalkingRewardCfg(RewardCfg):
     track_lin_vel_xy_exp = RewTerm(
         func=mdp.track_lin_vel_xy_yaw_frame_exp,
-        weight=1.0,
+        weight=3.0,
         params={"std": 0.5},
     )
     track_ang_vel_z_exp = RewTerm(
         func=mdp.track_ang_vel_z_world_exp,
-        weight=0.75,
+        weight=1.2,
         params={"std": 0.5},
     )
 
@@ -37,28 +37,72 @@ class G1KneeWalkingRewardCfg(RewardCfg):
     )
     flat_orientation_l2 = RewTerm(func=mdp.flat_orientation_l2, weight=-1.0)
 
-    # knee_air_time = RewTerm(
-    #     func=mdp.feet_air_time_positive_biped,
-    #     weight=0.10,
-    #     params={"sensor_cfg": SceneEntityCfg("contact_sensor", body_names=".*knee.*"), "threshold": 0.3},
-    # )
-
     knee_contact = RewTerm(
         func=mdp.desired_contacts,
-        weight=1.0,
+        weight=0.2,
         params={
             "sensor_cfg": SceneEntityCfg("contact_sensor", body_names=".*knee.*"),
             "threshold": 1.0,
         },
     )
 
-    knee_slide = RewTerm(
-        func=mdp.feet_slide,
-        weight=-0.5,
+    knee_air_time = RewTerm(
+        func=mdp.feet_air_time_positive_biped,
+        weight=0.35,
         params={
             "sensor_cfg": SceneEntityCfg("contact_sensor", body_names=".*knee.*"),
-            "asset_cfg": SceneEntityCfg("robot", body_names=".*knee.*"),
+            "threshold": 0.3,
         },
+    )
+
+    knee_x_separation = RewTerm(
+        func=mdp.knee_x_separation,
+        weight=-0.5,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                body_names=["left.*knee.*", "right.*knee.*"],
+            )
+        },
+    )
+
+    # knee_slide = RewTerm(
+    #     func=mdp.feet_slide,
+    #     weight=-0.05,
+    #     params={
+    #         "sensor_cfg": SceneEntityCfg("contact_sensor", body_names=".*knee.*"),
+    #         "asset_cfg": SceneEntityCfg("robot", body_names=".*knee.*"),
+    #     },
+    # )
+
+    alternating_knee_contact = RewTerm(
+        func=mdp.alternating_knee_contact,
+        weight=0.3,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_sensor",
+                body_names=["left.*knee.*", "right.*knee.*"],
+            ),
+            "threshold": 1.0,
+        },
+    )
+
+    alternating_knee_gait_phase = RewTerm(
+        func=mdp.alternating_knee_gait_phase,
+        weight=1.5,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_sensor",
+                body_names=["left.*knee.*", "right.*knee.*"],
+            ),
+            "period": 0.8,
+            "threshold": 1.0,
+        },
+    )
+
+    forward_progress = RewTerm(
+        func=mdp.forward_progress,
+        weight=0.5,
     )
 
     knee_force = RewTerm(
@@ -92,7 +136,7 @@ class G1KneeWalkingRewardCfg(RewardCfg):
 
     joint_deviation_lower_body = RewTerm(
         func=mdp.joint_deviation_l1,
-        weight=-0.6,
+        weight=-0.8,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
@@ -131,17 +175,15 @@ class G1KneeWalkFlatEnvCfg(BaseEnvCfg):
     def __post_init__(self):
         super().__post_init__()
 
-        H0 = 0.78 
+        H0 = 0.48 
 
         self.scene.height_scanner.prim_body_name = "torso_link"
         self.scene.robot = G1_KNEE_WALK_CFG
         self.scene.terrain_type = "generator"
-        self.scene.terrain_generator = GRAVEL_TERRAINS_CFG
+        self.scene.terrain_generator = FLAT_TERRAINS_CFG #GRAVEL_TERRAINS_CFG
 
-        # Knees are the locomotion contact bodies.
         self.robot.feet_body_names = [".*knee.*"]
 
-        # Do not terminate on knees. Terminate on upper body / torso / arms / head / feet.
         self.robot.terminate_contacts_body_names = [
             ".*torso.*",
             ".*head.*",
@@ -152,12 +194,10 @@ class G1KneeWalkFlatEnvCfg(BaseEnvCfg):
 
         self.domain_rand.events.add_base_mass.params["asset_cfg"].body_names = [".*torso.*"]
 
-        # Low height range, but still commanded as obs.
-        self.commands.ranges.base_height = (0.22 * H0, 0.45 * H0)
+        self.commands.ranges.base_height = (0.80 * H0, 1 * H0)
 
-        # Start conservative.
         self.commands.ranges.lin_vel_x = (0.0, 0.4)
-        self.commands.ranges.lin_vel_y = (-0.15, 0.15)
+        self.commands.ranges.lin_vel_y = (0.0, 0.0)
         self.commands.ranges.ang_vel_z = (-0.5, 0.5)
 
 

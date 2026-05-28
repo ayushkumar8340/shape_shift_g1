@@ -256,6 +256,10 @@ class BaseEnv(VecEnv):
         actor_obs, critic_obs = self.compute_observations()
         self.extras["observations"] = {"critic": critic_obs}
 
+        # debug to print robot height in sim
+        # if self.sim_step_counter % 200 == 0:  # print every ~0.2s
+        #     height = self.robot.data.root_pos_w[:, 2]
+        #     print("Base height (mean):", height.mean().item())
         return actor_obs, reward_buf, self.reset_buf, self.extras
 
     def check_reset(self):

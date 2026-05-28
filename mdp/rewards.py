@@ -165,3 +165,217 @@ def desired_contacts(env, threshold: float, sensor_cfg: SceneEntityCfg) -> torch
     )[0] > threshold
 
     return torch.sum(is_contact.float(), dim=1)
+
+
+def forward_progress(env, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    asset = env.scene[asset_cfg.name]
+
+    disp_xy = asset.data.root_pos_w[:, :2] - env.scene.env_origins[:, :2]
+
+    cmd_xy = env.command_generator.command[:, :2]
+    cmd_norm = torch.norm(cmd_xy, dim=1, keepdim=True).clamp(min=1e-6)
+    cmd_dir = cmd_xy / cmd_norm
+
+    progress = torch.sum(disp_xy * cmd_dir, dim=1)
+
+    progress *= torch.norm(cmd_xy, dim=1) > 0.1
+    return progress
+
+
+def alternating_knee_contact(env, sensor_cfg: SceneEntityCfg, threshold: float = 1.0) -> torch.Tensor:
+    contact_sensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history
+
+    contact = torch.max(
+        torch.norm(forces[:, :, sensor_cfg.body_ids], dim=-1),
+        dim=1,
+    )[0] > threshold
+
+    left_contact = contact[:, 0]
+    right_contact = contact[:, 1]
+
+    # reward exactly one knee in contact
+    return torch.logical_xor(left_contact, right_contact).float()
+
+
+def knee_x_separation(env, asset_cfg: SceneEntityCfg) -> torch.Tensor:
+    asset = env.scene[asset_cfg.name]
+    knee_pos = asset.data.body_pos_w[:, asset_cfg.body_ids, :]
+
+    left_x = knee_pos[:, 0, 0]
+    right_x = knee_pos[:, 1, 0]
+
+    return torch.abs(left_x - right_x)
+
+def alternating_knee_gait_phase(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    period: float = 0.8,
+    threshold: float = 1.0,
+) -> torch.Tensor:
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history
+
+    contact = torch.max(
+        torch.norm(forces[:, :, sensor_cfg.body_ids], dim=-1),
+        dim=1,
+    )[0] > threshold
+
+    left_contact = contact[:, 0]
+    right_contact = contact[:, 1]
+
+    t = env.episode_length_buf.float() * env.step_dt
+    phase = torch.remainder(t, period) / period
+
+    # first half: left knee should be contact, right knee swing
+    left_support_phase = phase < 0.5
+
+    reward_left_support = left_contact.float() + (~right_contact).float()
+    reward_right_support = right_contact.float() + (~left_contact).float()
+
+    reward = torch.where(
+        left_support_phase,
+        reward_left_support,
+        reward_right_support,
+    )
+
+    # normalize to [0, 1]
+    return reward * 0.5
+
+def desired_contacts_binary(env, threshold: float, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    """Reward if all selected bodies are in contact."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history
+
+    contact = torch.max(
+        torch.norm(forces[:, :, sensor_cfg.body_ids], dim=-1),
+        dim=1,
+    )[0] > threshold
+
+    return torch.all(contact, dim=1).float()
+
+
+def crawl_diagonal_gait_phase(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    period: float = 0.8,
+    threshold: float = 1.0,
+) -> torch.Tensor:
+    """
+    Diagonal crawl gait:
+      phase 0: left hand + right knee support, right hand + left knee swing
+      phase 1: right hand + left knee support, left hand + right knee swing
+
+    body order must be:
+      [left_hand, right_hand, left_knee, right_knee]
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history
+
+    contact = torch.max(
+        torch.norm(forces[:, :, sensor_cfg.body_ids], dim=-1),
+        dim=1,
+    )[0] > threshold
+
+    left_hand = contact[:, 0]
+    right_hand = contact[:, 1]
+    left_knee = contact[:, 2]
+    right_knee = contact[:, 3]
+
+    t = env.episode_length_buf.float() * env.step_dt
+    phase = torch.remainder(t, period) / period
+
+    phase_a = phase < 0.5
+
+    # Phase A: LH + RK support, RH + LK swing
+    reward_a = (
+        left_hand.float()
+        + right_knee.float()
+        + (~right_hand).float()
+        + (~left_knee).float()
+    )
+
+    # Phase B: RH + LK support, LH + RK swing
+    reward_b = (
+        right_hand.float()
+        + left_knee.float()
+        + (~left_hand).float()
+        + (~right_knee).float()
+    )
+
+    reward = torch.where(phase_a, reward_a, reward_b)
+
+    return reward / 4.0
+
+
+def crawl_contact_balance(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    threshold: float = 1.0,
+) -> torch.Tensor:
+    """
+    Reward having around two support contacts.
+    Prevents all-four dragging and one-limb falling.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history
+
+    contact = torch.max(
+        torch.norm(forces[:, :, sensor_cfg.body_ids], dim=-1),
+        dim=1,
+    )[0] > threshold
+
+    num_contacts = torch.sum(contact.float(), dim=1)
+
+    return torch.exp(-torch.square(num_contacts - 2.0))
+
+
+def crawl_limb_slide(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    asset_cfg: SceneEntityCfg,
+    threshold: float = 1.0,
+) -> torch.Tensor:
+    """
+    Penalize sliding of hands/knees while they are in contact.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history
+
+    contact = torch.max(
+        torch.norm(forces[:, :, sensor_cfg.body_ids], dim=-1),
+        dim=1,
+    )[0] > threshold
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    body_vel_xy = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2]
+
+    return torch.sum(torch.norm(body_vel_xy, dim=-1) * contact.float(), dim=1)
+
+
+def hand_knee_spacing(
+    env,
+    asset_cfg: SceneEntityCfg,
+    min_dist: float = 0.15,
+    max_dist: float = 0.75,
+) -> torch.Tensor:
+    """
+    Penalize crawl limbs being too collapsed or too stretched.
+    body order:
+      [left_hand, right_hand, left_knee, right_knee]
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    pos = asset.data.body_pos_w[:, asset_cfg.body_ids, :]
+
+    left_hand = pos[:, 0]
+    right_hand = pos[:, 1]
+    left_knee = pos[:, 2]
+    right_knee = pos[:, 3]
+
+    left_dist = torch.norm(left_hand[:, :2] - left_knee[:, :2], dim=1)
+    right_dist = torch.norm(right_hand[:, :2] - right_knee[:, :2], dim=1)
+
+    too_close = (min_dist - left_dist).clamp(min=0.0) + (min_dist - right_dist).clamp(min=0.0)
+    too_far = (left_dist - max_dist).clamp(min=0.0) + (right_dist - max_dist).clamp(min=0.0)
+
+    return too_close + too_far

@@ -1,15 +1,3 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers.
-# All rights reserved.
-# Original code is licensed under BSD-3-Clause.
-#
-# Copyright (c) 2025-2026, The Legged Lab Project Developers.
-# All rights reserved.
-# Modifications are licensed under BSD-3-Clause.
-#
-# This file contains code derived from Isaac Lab Project (BSD-3-Clause license)
-# with modifications by Legged Lab Project (BSD-3-Clause license).
-
-
 """
 Configuration classes defining the different terrains available. Each configuration class must
 inherit from ``isaaclab.terrains.terrains_cfg.TerrainConfig`` and define the following attributes:
@@ -98,5 +86,26 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
         # "gap": terrain_gen.MeshGapTerrainCfg(
         #     proportion=0.15, gap_width_range=(0.1, 0.4), platform_width=2.0
         # )
+    },
+)
+
+
+FLAT_TERRAINS_CFG = TerrainGeneratorCfg(
+    curriculum=False,
+    size=(8.0, 8.0),
+    border_width=20.0,
+    num_rows=10,
+    num_cols=20,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    use_cache=False,
+    sub_terrains={
+        "flat": terrain_gen.HfRandomUniformTerrainCfg(
+            proportion=1.0,
+            noise_range=(0.0, 0.0),
+            noise_step=0.005,  
+            border_width=0.25,
+        )
     },
 )
