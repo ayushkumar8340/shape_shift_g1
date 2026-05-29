@@ -27,7 +27,7 @@ class G1CrawlRewardCfg(RewardCfg):
 
     track_base_height_exp = RewTerm(
         func=mdp.track_base_height_exp,
-        weight=2.0,
+        weight=0.5,
         params={"std": 0.05},
     )
 
@@ -36,9 +36,7 @@ class G1CrawlRewardCfg(RewardCfg):
         weight=0.5,
     )
 
-    # -------------------------
-    # Body stability
-    # -------------------------
+
     lin_vel_z_l2 = RewTerm(
         func=mdp.lin_vel_z_l2,
         weight=-1.0,
@@ -77,8 +75,8 @@ class G1CrawlRewardCfg(RewardCfg):
             "sensor_cfg": SceneEntityCfg(
                 "contact_sensor",
                 body_names=[
-                    "left.*wrist.*",
-                    "right.*wrist.*",
+                    "left_rubber_hand",
+                    "right_rubber_hand",
                     "left.*knee.*",
                     "right.*knee.*",
                 ],
@@ -95,8 +93,8 @@ class G1CrawlRewardCfg(RewardCfg):
             "sensor_cfg": SceneEntityCfg(
                 "contact_sensor",
                 body_names=[
-                    "left.*wrist.*",
-                    "right.*wrist.*",
+                    "left_rubber_hand",
+                    "right_rubber_hand",
                     "left.*knee.*",
                     "right.*knee.*",
                 ],
@@ -112,8 +110,8 @@ class G1CrawlRewardCfg(RewardCfg):
             "sensor_cfg": SceneEntityCfg(
                 "contact_sensor",
                 body_names=[
-                    "left.*wrist.*",
-                    "right.*wrist.*",
+                    "left_rubber_hand",
+                    "right_rubber_hand",
                     "left.*knee.*",
                     "right.*knee.*",
                 ],
@@ -121,8 +119,8 @@ class G1CrawlRewardCfg(RewardCfg):
             "asset_cfg": SceneEntityCfg(
                 "robot",
                 body_names=[
-                    "left.*wrist.*",
-                    "right.*wrist.*",
+                    "left_rubber_hand",
+                    "right_rubber_hand",
                     "left.*knee.*",
                     "right.*knee.*",
                 ],
@@ -138,8 +136,8 @@ class G1CrawlRewardCfg(RewardCfg):
             "asset_cfg": SceneEntityCfg(
                 "robot",
                 body_names=[
-                    "left.*wrist.*",
-                    "right.*wrist.*",
+                    "left_rubber_hand",
+                    "right_rubber_hand",
                     "left.*knee.*",
                     "right.*knee.*",
                 ],
@@ -149,29 +147,26 @@ class G1CrawlRewardCfg(RewardCfg):
         },
     )
 
-    # Penalize contacts except knees, hands/wrists, and ankles if your model touches ankles in crawl.
     undesired_contacts = RewTerm(
         func=mdp.undesired_contacts,
         weight=-2.0,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_sensor",
-                body_names="(?!.*(knee|wrist|ankle).*).*",
+                body_names="(?!.*(knee|rubber_hand|ankle).*).*",
             ),
             "threshold": 1.0,
         },
     )
 
-    # -------------------------
-    # Force / safety
-    # -------------------------
+
     crawl_limb_force = RewTerm(
         func=mdp.body_force,
         weight=-2e-3,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_sensor",
-                body_names=".*(knee|wrist).*",
+                body_names=".*(knee|rubber_hand).*",
             ),
             "threshold": 500,
             "max_reward": 400,
@@ -183,9 +178,6 @@ class G1CrawlRewardCfg(RewardCfg):
         weight=-200.0,
     )
 
-    # -------------------------
-    # Regularization
-    # -------------------------
     energy = RewTerm(
         func=mdp.energy,
         weight=-5e-4,
@@ -274,6 +266,7 @@ class G1CrawlFlatEnvCfg(BaseEnvCfg):
 
         # Tight reset around crawl pose.
         self.domain_rand.events.reset_robot_joints.params["position_range"] = (0.9, 1.1)
+        self.domain_rand.events.reset_base.params["pose_range"]["yaw"] = (0,0)
 
         # Crawl height command. This remains in obs through the height-command env.
         self.commands.ranges.base_height = (1.0 * H0, 1.0 * H0)

@@ -191,7 +191,8 @@ G1_KNEE_WALK_CFG = G1_CFG.replace(
 
 G1_CRAWL_CFG = G1_CFG.replace(
     init_state=G1_CFG.init_state.replace(
-        pos=(0.0, 0.0, 0.38),  
+        pos=(0.0, 0.0, 0.38),
+        rot=(0.70710678, 0.0, 0.70710678, 0.0),  
         joint_pos={
             **G1_CFG.init_state.joint_pos,
 
@@ -202,7 +203,14 @@ G1_CRAWL_CFG = G1_CFG.replace(
             ".*_hip_roll_joint": 0.0,
             ".*_hip_yaw_joint": 0.0,
             ".*_ankle_roll_joint": 0.0,
-            ".*_shoulder_roll_joint": -1.507,
+            "left_shoulder_pitch_joint": -0.5,
+            "right_shoulder_pitch_joint": -0.5,
+            ".*_elbow_joint" : 0.1,
+            "left_wrist_roll_joint":0.75,
+            "right_wrist_roll_joint":-0.75,
+            "right_wrist_yaw_joint":-0.75,
+            "left_wrist_yaw_joint":0.75
+            # "left_elbow_joint" : 0.1,
         },
     )
 )
