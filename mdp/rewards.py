@@ -129,6 +129,56 @@ def joint_deviation_l1(env: BaseEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg(
     return torch.sum(torch.abs(angle), dim=1)
 
 
+def track_crawl_lin_vel_xy_exp(
+    env,
+    std: float,
+    forward_axis: int = 2,
+    forward_sign: float = 1.0,
+    lateral_axis: int = 1,
+    lateral_sign: float = 1.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    body_cfg: SceneEntityCfg = SceneEntityCfg("robot", body_names=".*torso.*"),
+) -> torch.Tensor:
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    body_quat = asset.data.body_quat_w[:, body_cfg.body_ids[0], :]
+
+    # Local forward axis in crawl body frame.
+    local_forward = torch.zeros((env.num_envs, 3), device=env.device)
+    local_forward[:, forward_axis] = forward_sign
+
+    # Local lateral axis in crawl body frame.
+    local_lateral = torch.zeros((env.num_envs, 3), device=env.device)
+    local_lateral[:, lateral_axis] = lateral_sign
+
+    # Convert crawl frame axes to world.
+    forward_w = math_utils.quat_apply(body_quat, local_forward)
+    lateral_w = math_utils.quat_apply(body_quat, local_lateral)
+
+    # Project both onto horizontal ground plane.
+    forward_w[:, 2] = 0.0
+    lateral_w[:, 2] = 0.0
+
+    forward_w = forward_w / torch.norm(forward_w, dim=1, keepdim=True).clamp(min=1e-6)
+
+    # Make lateral exactly perpendicular to forward on the ground.
+    # This avoids weird non-orthogonal body axes after pitch/roll.
+    lateral_w = lateral_w - torch.sum(lateral_w * forward_w, dim=1, keepdim=True) * forward_w
+    lateral_w = lateral_w / torch.norm(lateral_w, dim=1, keepdim=True).clamp(min=1e-6)
+
+    root_vel_w = asset.data.root_lin_vel_w[:, :3]
+
+    actual_vx = torch.sum(root_vel_w * forward_w, dim=1)
+    actual_vy = torch.sum(root_vel_w * lateral_w, dim=1)
+
+    target_vx = env.command_generator.command[:, 0]
+    target_vy = env.command_generator.command[:, 1]
+
+    lin_vel_error = torch.square(target_vx - actual_vx) + torch.square(target_vy - actual_vy)
+
+    return torch.exp(-lin_vel_error / std**2)
+
+
 def body_orientation_l2(env: BaseEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     asset: Articulation = env.scene[asset_cfg.name]
     body_orientation = math_utils.quat_apply_inverse(
@@ -197,6 +247,23 @@ def alternating_knee_contact(env, sensor_cfg: SceneEntityCfg, threshold: float =
     # reward exactly one knee in contact
     return torch.logical_xor(left_contact, right_contact).float()
 
+def hand_force_support(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    min_force: float = 20.0,
+    max_force: float = 120.0,
+) -> torch.Tensor:
+    contact_sensor = env.scene.sensors[sensor_cfg.name]
+
+    fz = torch.abs(contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2])
+
+    # reward hand vertical force in a useful range, but do not reward huge impacts
+    clipped = torch.clamp(fz, min=0.0, max=max_force)
+
+    # only count force above min_force
+    useful = torch.clamp(clipped - min_force, min=0.0)
+
+    return torch.sum(useful, dim=1)
 
 def knee_x_separation(env, asset_cfg: SceneEntityCfg) -> torch.Tensor:
     asset = env.scene[asset_cfg.name]
@@ -255,20 +322,12 @@ def desired_contacts_binary(env, threshold: float, sensor_cfg: SceneEntityCfg) -
     return torch.all(contact, dim=1).float()
 
 
-def crawl_diagonal_gait_phase(
+def crawl_diagonal_gait_strict(
     env,
     sensor_cfg: SceneEntityCfg,
     period: float = 0.8,
     threshold: float = 1.0,
 ) -> torch.Tensor:
-    """
-    Diagonal crawl gait:
-      phase 0: left hand + right knee support, right hand + left knee swing
-      phase 1: right hand + left knee support, left hand + right knee swing
-
-    body order must be:
-      [left_hand, right_hand, left_knee, right_knee]
-    """
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     forces = contact_sensor.data.net_forces_w_history
 
@@ -277,6 +336,8 @@ def crawl_diagonal_gait_phase(
         dim=1,
     )[0] > threshold
 
+    # body order:
+    # [left_hand, right_hand, left_knee, right_knee]
     left_hand = contact[:, 0]
     right_hand = contact[:, 1]
     left_knee = contact[:, 2]
@@ -287,36 +348,31 @@ def crawl_diagonal_gait_phase(
 
     phase_a = phase < 0.5
 
-    # Phase A: LH + RK support, RH + LK swing
-    reward_a = (
-        left_hand.float()
-        + right_knee.float()
-        + (~right_hand).float()
-        + (~left_knee).float()
+    # Phase A: LH + RK should support, RH + LK should swing
+    phase_a_correct = (
+        left_hand
+        & right_knee
+        & (~right_hand)
+        & (~left_knee)
     )
 
-    # Phase B: RH + LK support, LH + RK swing
-    reward_b = (
-        right_hand.float()
-        + left_knee.float()
-        + (~left_hand).float()
-        + (~right_knee).float()
+    # Phase B: RH + LK should support, LH + RK should swing
+    phase_b_correct = (
+        right_hand
+        & left_knee
+        & (~left_hand)
+        & (~right_knee)
     )
 
-    reward = torch.where(phase_a, reward_a, reward_b)
-
-    return reward / 4.0
+    return torch.where(phase_a, phase_a_correct, phase_b_correct).float()
 
 
-def crawl_contact_balance(
+def crawl_wrong_contact_count(
     env,
     sensor_cfg: SceneEntityCfg,
     threshold: float = 1.0,
+    target_contacts: float = 2.0,
 ) -> torch.Tensor:
-    """
-    Reward having around two support contacts.
-    Prevents all-four dragging and one-limb falling.
-    """
     contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
     forces = contact_sensor.data.net_forces_w_history
 
@@ -327,8 +383,146 @@ def crawl_contact_balance(
 
     num_contacts = torch.sum(contact.float(), dim=1)
 
-    return torch.exp(-torch.square(num_contacts - 2.0))
+    return torch.square(num_contacts - target_contacts)
 
+def crawl_fourbeat_swing_drag_penalty(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    period: float = 1.0,
+    threshold: float = 1.0,
+) -> torch.Tensor:
+    contact_sensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history
+
+    contact = torch.max(
+        torch.norm(forces[:, :, sensor_cfg.body_ids], dim=-1),
+        dim=1,
+    )[0] > threshold
+
+    # order: [LH, RH, LK, RK]
+    lh = contact[:, 0]
+    rh = contact[:, 1]
+    lk = contact[:, 2]
+    rk = contact[:, 3]
+
+    t = env.episode_length_buf.float() * env.step_dt
+    phase = torch.remainder(t, period) / period
+
+    q1 = phase < 0.25
+    q2 = (phase >= 0.25) & (phase < 0.50)
+    q3 = (phase >= 0.50) & (phase < 0.75)
+    q4 = phase >= 0.75
+
+    # phase 1 swing: LH
+    # phase 2 swing: RK
+    # phase 3 swing: RH
+    # phase 4 swing: LK
+    penalty = torch.zeros_like(phase)
+    penalty = torch.where(q1, lh.float(), penalty)
+    penalty = torch.where(q2, rk.float(), penalty)
+    penalty = torch.where(q3, rh.float(), penalty)
+    penalty = torch.where(q4, lk.float(), penalty)
+
+    return penalty
+
+
+
+def crawl_fourbeat_gait_phase(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    period: float = 1.0,
+    threshold: float = 1.0,
+) -> torch.Tensor:
+    contact_sensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history
+
+    contact = torch.max(
+        torch.norm(forces[:, :, sensor_cfg.body_ids], dim=-1),
+        dim=1,
+    )[0] > threshold
+
+    # order: [LH, RH, LK, RK]
+    lh = contact[:, 0]
+    rh = contact[:, 1]
+    lk = contact[:, 2]
+    rk = contact[:, 3]
+
+    t = env.episode_length_buf.float() * env.step_dt
+    phase = torch.remainder(t, period) / period
+
+    q1 = phase < 0.25
+    q2 = (phase >= 0.25) & (phase < 0.50)
+    q3 = (phase >= 0.50) & (phase < 0.75)
+    q4 = phase >= 0.75
+
+    # score each phase: 3 support limbs should contact, 1 swing limb should not
+    s1 = (rh.float() + lk.float() + rk.float() + (~lh).float()) / 4.0
+    s2 = (lh.float() + rh.float() + lk.float() + (~rk).float()) / 4.0
+    s3 = (lh.float() + lk.float() + rk.float() + (~rh).float()) / 4.0
+    s4 = (lh.float() + rh.float() + rk.float() + (~lk).float()) / 4.0
+
+    reward = torch.zeros_like(s1)
+    reward = torch.where(q1, s1, reward)
+    reward = torch.where(q2, s2, reward)
+    reward = torch.where(q3, s3, reward)
+    reward = torch.where(q4, s4, reward)
+
+    return reward
+
+def crawl_contact_count_penalty(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    threshold: float = 1.0,
+    target_contacts: float = 3.0,
+) -> torch.Tensor:
+    contact_sensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history
+
+    contact = torch.max(
+        torch.norm(forces[:, :, sensor_cfg.body_ids], dim=-1),
+        dim=1,
+    )[0] > threshold
+
+    num_contacts = torch.sum(contact.float(), dim=1)
+    return torch.square(num_contacts - target_contacts)
+
+def hop_penalty(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    threshold: float = 1.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    asset = env.scene[asset_cfg.name]
+
+    contact_sensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history
+
+    contact = torch.max(
+        torch.norm(forces[:, :, sensor_cfg.body_ids], dim=-1),
+        dim=1,
+    )[0] > threshold
+
+    num_contacts = torch.sum(contact.float(), dim=1)
+
+    # penalize vertical velocity + too few contacts
+    return torch.square(asset.data.root_lin_vel_w[:, 2]) + 2.0 * (num_contacts < 3).float()
+
+def hand_contact_reward(env, sensor_cfg: SceneEntityCfg, threshold: float = 1.0) -> torch.Tensor:
+    contact_sensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history
+
+    contact = torch.max(
+        torch.norm(forces[:, :, sensor_cfg.body_ids], dim=-1),
+        dim=1,
+    )[0] > threshold
+
+    return torch.sum(contact.float(), dim=1)
+
+
+def hand_force_reward(env, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    contact_sensor = env.scene.sensors[sensor_cfg.name]
+    forces_z = torch.abs(contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2])
+    return torch.sum(forces_z, dim=1)
 
 def crawl_limb_slide(
     env,
@@ -379,3 +573,26 @@ def hand_knee_spacing(
     too_far = (left_dist - max_dist).clamp(min=0.0) + (right_dist - max_dist).clamp(min=0.0)
 
     return too_close + too_far
+
+
+def body_orientation_target_l2(
+    env,
+    target_gravity_b: tuple,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    asset: Articulation = env.scene[asset_cfg.name]
+
+    body_quat = asset.data.body_quat_w[:, asset_cfg.body_ids[0], :]
+
+    gravity_b = math_utils.quat_apply_inverse(
+        body_quat,
+        asset.data.GRAVITY_VEC_W,
+    )
+
+    target = torch.tensor(
+        target_gravity_b,
+        device=gravity_b.device,
+        dtype=gravity_b.dtype,
+    ).unsqueeze(0)
+
+    return torch.sum(torch.square(gravity_b - target), dim=1)

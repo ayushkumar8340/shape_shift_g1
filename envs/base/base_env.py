@@ -23,6 +23,10 @@ from isaaclab.sim import PhysxCfg, SimulationContext
 from isaaclab.utils.buffers import CircularBuffer, DelayBuffer
 from mdp.command_gen import UniformVelHeightCommand, UniformVelHeightCommandCfg
 from rsl_rl.env import VecEnv
+# debug draw
+# from isaacsim.util.debug_draw import _debug_draw
+# import isaaclab.utils.math as math_utils
+# from isaaclab.managers.scene_entity_cfg import SceneEntityCfg
 
 
 from envs.base.base_env_config import BaseEnvCfg
@@ -40,6 +44,9 @@ class BaseEnv(VecEnv):
         self.step_dt = self.cfg.sim.decimation * self.cfg.sim.dt
         self.num_envs = self.cfg.scene.num_envs
         self.seed(cfg.scene.seed)
+
+        # Debug drawing
+        # self.debug_draw = _debug_draw.acquire_debug_draw_interface()
 
         sim_cfg = sim_utils.SimulationCfg(
             device=cfg.device,
@@ -92,8 +99,119 @@ class BaseEnv(VecEnv):
             self.event_manager.apply(mode="startup")
         self.reset(env_ids)
 
+    # For debugging
+    # def draw_velocity_debug(self, env_ids=None, scale: float = 1.0):
+    #     if self.headless:
+    #         return
+
+    #     if env_ids is None:
+    #         env_ids = torch.arange(min(8, self.num_envs), device=self.device)
+
+    #     # clear previous lines
+    #     self.debug_draw.clear_lines()
+
+    #     torso_cfg = SceneEntityCfg("robot", body_names=".*torso.*")
+    #     torso_cfg.resolve(self.scene)
+    #     torso_id = torso_cfg.body_ids[0]
+
+    #     torso_quat = self.robot.data.body_quat_w[env_ids, torso_id, :]
+    #     root_pos = self.robot.data.root_pos_w[env_ids]
+    #     cmd = self.command_generator.command[env_ids]
+
+    #     # Crawl frame:
+    #     # forward = torso local +Z
+    #     # lateral = torso local +Y
+    #     local_forward = torch.zeros((len(env_ids), 3), device=self.device)
+    #     local_forward[:, 2] = 1.0
+
+    #     local_lateral = torch.zeros((len(env_ids), 3), device=self.device)
+    #     local_lateral[:, 1] = 1.0
+
+    #     forward_w = math_utils.quat_apply(torso_quat, local_forward)
+    #     lateral_w = math_utils.quat_apply(torso_quat, local_lateral)
+
+    #     # project to ground plane
+    #     forward_w[:, 2] = 0.0
+    #     lateral_w[:, 2] = 0.0
+
+    #     forward_w = forward_w / torch.norm(forward_w, dim=1, keepdim=True).clamp(min=1e-6)
+
+    #     # orthogonalize lateral wrt forward
+    #     lateral_w = lateral_w - torch.sum(lateral_w * forward_w, dim=1, keepdim=True) * forward_w
+    #     lateral_w = lateral_w / torch.norm(lateral_w, dim=1, keepdim=True).clamp(min=1e-6)
+
+    #     # commanded target velocity in world frame
+    #     target_vel_w = cmd[:, 0:1] * forward_w + cmd[:, 1:2] * lateral_w
+
+    #     # actual root velocity in world frame
+    #     actual_vel_w = self.robot.data.root_lin_vel_w[env_ids, :3].clone()
+    #     actual_vel_w[:, 2] = 0.0
+
+    #     starts = []
+    #     ends = []
+    #     colors = []
+    #     sizes = []
+
+    #     for i in range(len(env_ids)):
+    #         p = root_pos[i].detach().cpu().numpy()
+
+    #         start_target = (float(p[0]), float(p[1]), float(p[2] + 0.35))
+    #         end_target = (
+    #             float(p[0] + scale * target_vel_w[i, 0].item()),
+    #             float(p[1] + scale * target_vel_w[i, 1].item()),
+    #             float(p[2] + 0.35),
+    #         )
+
+    #         start_actual = (float(p[0]), float(p[1]), float(p[2] + 0.45))
+    #         end_actual = (
+    #             float(p[0] + scale * actual_vel_w[i, 0].item()),
+    #             float(p[1] + scale * actual_vel_w[i, 1].item()),
+    #             float(p[2] + 0.45),
+    #         )
+
+    #         # target = green
+    #         starts.append(start_target)
+    #         ends.append(end_target)
+    #         colors.append((0.0, 1.0, 0.0, 1.0))
+    #         sizes.append(4.0)
+
+    #         # actual = red
+    #         starts.append(start_actual)
+    #         ends.append(end_actual)
+    #         colors.append((1.0, 0.0, 0.0, 1.0))
+    #         sizes.append(4.0)
+
+    #     self.debug_draw.draw_lines(starts, ends, colors, sizes)
+
     def _create_command_generator(self):
         self.command_generator = UniformVelocityCommand(self.command_cfg, self)
+
+    # debug
+    def print_body_axes(self, body_name_pattern=".*torso.*", env_id: int = 0):
+        import torch
+        import isaaclab.utils.math as math_utils
+        from isaaclab.managers.scene_entity_cfg import SceneEntityCfg
+
+        body_cfg = SceneEntityCfg("robot", body_names=body_name_pattern)
+        body_cfg.resolve(self.scene)
+
+        body_id = body_cfg.body_ids[0]
+
+        quat_w = self.robot.data.body_quat_w[env_id, body_id].unsqueeze(0)
+
+        x_axis_b = torch.tensor([[1.0, 0.0, 0.0]], device=self.device)
+        y_axis_b = torch.tensor([[0.0, 1.0, 0.0]], device=self.device)
+        z_axis_b = torch.tensor([[0.0, 0.0, 1.0]], device=self.device)
+
+        x_axis_w = math_utils.quat_apply(quat_w, x_axis_b)[0]
+        y_axis_w = math_utils.quat_apply(quat_w, y_axis_b)[0]
+        z_axis_w = math_utils.quat_apply(quat_w, z_axis_b)[0]
+
+        print("\n[BODY AXES DEBUG]")
+        print(f"body: {self.robot.data.body_names[body_id]}")
+        print(f"+X world: {x_axis_w.detach().cpu().numpy()}")
+        print(f"+Y world: {y_axis_w.detach().cpu().numpy()}")
+        print(f"+Z world: {z_axis_w.detach().cpu().numpy()}")
 
     def init_buffers(self):
         self.extras = {}
@@ -245,6 +363,11 @@ class BaseEnv(VecEnv):
 
         self.episode_length_buf += 1
         self.command_generator.compute(self.step_dt)
+        
+        # debug draw velocities
+        # if not self.headless and self.sim_step_counter % 10 == 0:
+        #     self.draw_velocity_debug(scale=1.0)
+
         if "interval" in self.event_manager.available_modes:
             self.event_manager.apply(mode="interval", dt=self.step_dt)
 
@@ -255,6 +378,10 @@ class BaseEnv(VecEnv):
 
         actor_obs, critic_obs = self.compute_observations()
         self.extras["observations"] = {"critic": critic_obs}
+
+        ## debug
+        # if self.sim_step_counter == 100:
+        #     self.print_body_axes(".*torso.*", env_id=0)
 
         # debug to print robot height in sim
         # if self.sim_step_counter % 200 == 0:  # print every ~0.2s

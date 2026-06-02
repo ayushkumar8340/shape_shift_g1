@@ -10,14 +10,20 @@ from terrains import FLAT_TERRAINS_CFG, GRAVEL_TERRAINS_CFG, ROUGH_TERRAINS_CFG
 
 @configclass
 class G1CrawlRewardCfg(RewardCfg):
-    # -------------------------
-    # Command tracking
-    # -------------------------
-    track_lin_vel_xy_exp = RewTerm(
-        func=mdp.track_lin_vel_xy_yaw_frame_exp,
+    
+    track_crawl_lin_vel_xy_exp = RewTerm(
+        func=mdp.track_crawl_lin_vel_xy_exp,
         weight=3.0,
-        params={"std": 0.5},
+        params={
+            "std": 0.5,
+            "forward_axis": 2,
+            "forward_sign": 1.0,
+            "lateral_axis": 1,
+            "lateral_sign": 1.0,
+            "body_cfg": SceneEntityCfg("robot", body_names=".*torso.*"),
+        },
     )
+
 
     track_ang_vel_z_exp = RewTerm(
         func=mdp.track_ang_vel_z_world_exp,
@@ -31,11 +37,6 @@ class G1CrawlRewardCfg(RewardCfg):
         params={"std": 0.05},
     )
 
-    forward_progress = RewTerm(
-        func=mdp.forward_progress,
-        weight=0.5,
-    )
-
 
     lin_vel_z_l2 = RewTerm(
         func=mdp.lin_vel_z_l2,
@@ -47,30 +48,21 @@ class G1CrawlRewardCfg(RewardCfg):
         weight=-0.15,
     )
 
-    body_orientation_l2 = RewTerm(
-        func=mdp.body_orientation_l2,
-        weight=-2.0,
+    body_orientation_horizontal = RewTerm(
+        func=mdp.body_orientation_target_l2,
+        weight=-8.0,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
                 body_names=".*torso.*",
-            )
+            ),
+            "target_gravity_b": (1.0, 0.0, 0.0),
         },
     )
 
-    flat_orientation_l2 = RewTerm(
-        func=mdp.flat_orientation_l2,
-        weight=-0.5,
-    )
-
-    # -------------------------
-    # Crawl contacts
-    # Order is important:
-    # [left_hand, right_hand, left_knee, right_knee]
-    # -------------------------
-    crawl_diagonal_gait_phase = RewTerm(
-        func=mdp.crawl_diagonal_gait_phase,
-        weight=2.0,
+    crawl_fourbeat_swing_drag_penalty = RewTerm(
+        func=mdp.crawl_fourbeat_swing_drag_penalty,
+        weight=-1.0,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_sensor",
@@ -81,57 +73,30 @@ class G1CrawlRewardCfg(RewardCfg):
                     "right.*knee.*",
                 ],
             ),
-            "period": 0.9,
+            "period": 1.0,
             "threshold": 1.0,
         },
     )
 
-    crawl_contact_balance = RewTerm(
-        func=mdp.crawl_contact_balance,
-        weight=0.8,
+    hand_force_support = RewTerm(
+        func=mdp.hand_force_support,
+        weight=0.001,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_sensor",
                 body_names=[
                     "left_rubber_hand",
                     "right_rubber_hand",
-                    "left.*knee.*",
-                    "right.*knee.*",
                 ],
             ),
-            "threshold": 1.0,
-        },
-    )
-
-    crawl_limb_slide = RewTerm(
-        func=mdp.crawl_limb_slide,
-        weight=-0.04,
-        params={
-            "sensor_cfg": SceneEntityCfg(
-                "contact_sensor",
-                body_names=[
-                    "left_rubber_hand",
-                    "right_rubber_hand",
-                    "left.*knee.*",
-                    "right.*knee.*",
-                ],
-            ),
-            "asset_cfg": SceneEntityCfg(
-                "robot",
-                body_names=[
-                    "left_rubber_hand",
-                    "right_rubber_hand",
-                    "left.*knee.*",
-                    "right.*knee.*",
-                ],
-            ),
-            "threshold": 1.0,
+            "min_force": 20.0,
+            "max_force": 120.0,
         },
     )
 
     hand_knee_spacing = RewTerm(
         func=mdp.hand_knee_spacing,
-        weight=-0.5,
+        weight=-0.25,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot",
@@ -143,7 +108,7 @@ class G1CrawlRewardCfg(RewardCfg):
                 ],
             ),
             "min_dist": 0.15,
-            "max_dist": 0.75,
+            "max_dist": 0.90,
         },
     )
 
@@ -232,6 +197,75 @@ class G1CrawlRewardCfg(RewardCfg):
     )
 
 
+    crawl_fourbeat_gait_phase = RewTerm(
+        func=mdp.crawl_fourbeat_gait_phase,
+        weight=2.5,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_sensor",
+                body_names=[
+                    "left_rubber_hand",
+                    "right_rubber_hand",
+                    "left.*knee.*",
+                    "right.*knee.*",
+                ],
+            ),
+            "period": 1.0,
+            "threshold": 1.0,
+        },
+    )
+
+    crawl_contact_count_penalty = RewTerm(
+        func=mdp.crawl_contact_count_penalty,
+        weight=-1.0,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_sensor",
+                body_names=[
+                    "left_rubber_hand",
+                    "right_rubber_hand",
+                    "left.*knee.*",
+                    "right.*knee.*",
+                ],
+            ),
+            "threshold": 1.0,
+            "target_contacts": 3.0,
+        },
+    )
+
+    hop_penalty = RewTerm(
+        func=mdp.hop_penalty,
+        weight=-2.0,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_sensor",
+                body_names=[
+                    "left_rubber_hand",
+                    "right_rubber_hand",
+                    "left.*knee.*",
+                    "right.*knee.*",
+                ],
+            ),
+            "threshold": 1.0,
+        },
+    )
+
+    hand_contact_reward = RewTerm(
+        func=mdp.hand_contact_reward,
+        weight=0.8,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_sensor",
+                body_names=[
+                    "left_rubber_hand",
+                    "right_rubber_hand",
+                ],
+            ),
+            "threshold": 1.0,
+        },
+    )
+
+
 @configclass
 class G1CrawlFlatEnvCfg(BaseEnvCfg):
     reward = G1CrawlRewardCfg()
@@ -250,7 +284,7 @@ class G1CrawlFlatEnvCfg(BaseEnvCfg):
         # BaseEnv still calls this "feet_body_names", but for crawl we use knees + hands.
         self.robot.feet_body_names = [
             ".*knee.*",
-            ".*wrist.*",
+            ".*rubber_hand.*",
         ]
 
         # Terminate if torso/head/upper arms touch.
@@ -275,7 +309,7 @@ class G1CrawlFlatEnvCfg(BaseEnvCfg):
         self.commands.rel_standing_envs = 0.0
         self.commands.ranges.lin_vel_x = (0.10, 0.30)
         self.commands.ranges.lin_vel_y = (0.0, 0.0)
-        self.commands.ranges.ang_vel_z = (-0.25, 0.25)
+        self.commands.ranges.ang_vel_z = (0.0, 0.0)
 
 
 @configclass

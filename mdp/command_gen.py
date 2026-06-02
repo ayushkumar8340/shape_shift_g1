@@ -69,3 +69,4 @@ class UniformVelHeightCommand:
         if self.cfg.rel_standing_envs > 0.0:
             mask = torch.rand(n, device=self.device) < self.cfg.rel_standing_envs
             self.command[env_ids[mask], 0:3] = 0.0
+
