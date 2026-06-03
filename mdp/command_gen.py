@@ -155,3 +155,99 @@ class DribbleCommand:
 
         # 3. Combine them into a 6D command vector
         return torch.cat([rel_pos_local, rel_vel_local], dim=-1)
+
+
+@configclass
+class WalkDribbleCommandRangesCfg:
+    pos_x: tuple = (0.8, 2.0)   # always force a real walk
+    pos_y: tuple = (-0.8, 0.8)
+
+@configclass
+class WalkDribbleCommandCfg:
+    ranges: WalkDribbleCommandRangesCfg = WalkDribbleCommandRangesCfg()
+    resampling_time_range: tuple = (6.0, 10.0)
+    rel_standing_envs: float = 0.0
+
+class WalkDribbleCommand:
+    """Combined command for walk-to-target + dribble.
+
+    command (8D, robot local frame):
+        [0:2] target dx, dy  (delta to walk target)
+        [2:5] ball dx, dy, dz
+        [5:8] ball vx, vy, vz
+    """
+
+    def __init__(self, cfg, env):
+        self.cfg = cfg
+        self.env = env
+        self.device = env.device
+        self.num_envs = env.num_envs
+        self.target_pos_w = torch.zeros((self.num_envs, 3), device=self.device)
+        self._time_left = torch.zeros(self.num_envs, device=self.device)
+
+    def _sample_resample_time(self, n: int):
+        lo, hi = self.cfg.resampling_time_range
+        return lo + (hi - lo) * torch.rand(n, device=self.device)
+
+    def resample(self, env_ids: torch.Tensor):
+        n = env_ids.numel()
+        r = self.cfg.ranges
+        current_pos = self.env.robot.data.root_pos_w[env_ids]
+
+        rand_x = torch.rand(n, device=self.device) * (r.pos_x[1] - r.pos_x[0]) + r.pos_x[0]
+        rand_y = torch.rand(n, device=self.device) * (r.pos_y[1] - r.pos_y[0]) + r.pos_y[0]
+
+        # standing envs: target = current pose -> "stay and dribble"
+        if self.cfg.rel_standing_envs > 0.0:
+            standing = torch.rand(n, device=self.device) < self.cfg.rel_standing_envs
+            rand_x[standing] = 0.0
+            rand_y[standing] = 0.0
+
+        self.target_pos_w[env_ids, 0] = current_pos[:, 0] + rand_x
+        self.target_pos_w[env_ids, 1] = current_pos[:, 1] + rand_y
+        self.target_pos_w[env_ids, 2] = 0.0
+
+    def reset(self, env_ids=None):
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+        self.resample(env_ids)
+        self._time_left[env_ids] = self._sample_resample_time(env_ids.numel())
+
+    def compute(self, dt: float):
+        self._time_left -= dt
+        env_ids = torch.nonzero(self._time_left <= 0.0, as_tuple=False).flatten()
+        if env_ids.numel() > 0:
+            self.resample(env_ids)
+            self._time_left[env_ids] = self._sample_resample_time(env_ids.numel())
+
+    @property
+    def target_command(self) -> torch.Tensor:
+        """2D target delta in robot local frame (for reward functions)."""
+        root_pos = self.env.robot.data.root_pos_w
+        root_quat = self.env.robot.data.root_quat_w
+        rel_w = self.target_pos_w - root_pos
+        return math_utils.quat_rotate_inverse(root_quat, rel_w)[:, :2]
+
+    @property
+    def command(self) -> torch.Tensor:
+        """8D command vector that goes into the policy observation."""
+        robot = self.env.scene["robot"]
+        ball = self.env.scene["ball"]
+
+        root_pos = robot.data.root_pos_w
+        root_quat = robot.data.root_quat_w
+
+        rel_target_w = self.target_pos_w - root_pos
+        rel_target_local = math_utils.quat_rotate_inverse(root_quat, rel_target_w)[:, :2]
+
+        rel_ball_pos_w = ball.data.root_pos_w - root_pos
+        rel_ball_pos_local = math_utils.quat_rotate_inverse(root_quat, rel_ball_pos_w)
+
+        rel_ball_vel_w = ball.data.root_lin_vel_w
+        rel_ball_vel_local = math_utils.quat_rotate_inverse(root_quat, rel_ball_vel_w)
+
+        return torch.cat([rel_target_local, rel_ball_pos_local, rel_ball_vel_local], dim=-1)
+
+    def get_heading_error(self) -> torch.Tensor:
+        rel = self.target_command
+        return torch.atan2(rel[:, 1], rel[:, 0]).unsqueeze(-1)

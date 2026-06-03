@@ -283,3 +283,116 @@ def penalize_lifted_feet(env: BaseEnv, max_height: float = 0.08, asset_cfg: Scen
     foot_z = robot.data.body_pos_w[:, asset_cfg.body_ids, 2]
     penalty = torch.where(foot_z > max_height, foot_z - max_height, 0.0)
     return torch.sum(penalty, dim=1)
+
+def track_position_exp_wd(env: BaseEnv, sigma: float = 1.0) -> torch.Tensor:
+    rel_pos = env.command_generator.target_command
+    dist = torch.norm(rel_pos, dim=-1)
+    dist_outside = torch.clamp(dist - 0.5, min=0.0)
+    return torch.exp(-torch.square(dist_outside) / sigma)
+
+def stop_at_target_exp_wd(env: BaseEnv, dist_threshold: float = 0.5, sigma: float = 0.2) -> torch.Tensor:
+    rel_pos = env.command_generator.target_command
+    dist = torch.norm(rel_pos, dim=-1)
+    lin_vel = env.robot.data.root_lin_vel_w
+    vel_sq = torch.sum(lin_vel[:, :2] ** 2, dim=-1)
+    return (dist < dist_threshold) * torch.exp(-vel_sq / sigma)
+
+def face_target_exp_wd(env: BaseEnv, sigma: float = 0.5) -> torch.Tensor:
+    dist = torch.norm(env.command_generator.target_command, dim=-1)
+    heading_error = env.command_generator.get_heading_error().squeeze(-1)
+    is_far = (dist > 0.5).float()
+    return torch.exp(-torch.square(heading_error) / sigma) * is_far
+
+def penalize_wobble_at_target_wd(env: BaseEnv, dist_threshold: float = 0.5) -> torch.Tensor:
+    dist = torch.norm(env.command_generator.target_command, dim=-1)
+    joint_vel_sq = torch.sum(torch.square(env.robot.data.joint_vel), dim=-1)
+    return (dist < dist_threshold).float() * joint_vel_sq
+
+def feet_air_time_positive_biped_wd(env: BaseEnv, threshold: float, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    air_time = contact_sensor.data.current_air_time[:, sensor_cfg.body_ids]
+    contact_time = contact_sensor.data.current_contact_time[:, sensor_cfg.body_ids]
+    in_contact = contact_time > 0.0
+    in_mode_time = torch.where(in_contact, contact_time, air_time)
+    single_stance = torch.sum(in_contact.int(), dim=1) == 1
+    reward = torch.min(torch.where(single_stance.unsqueeze(-1), in_mode_time, 0.0), dim=1)[0]
+    reward = torch.clamp(reward, max=threshold)
+    dist = torch.norm(env.command_generator.target_command, dim=-1)
+    reward *= (dist > 0.5)
+    return reward
+
+def ball_drift_relative_to_robot(env: BaseEnv) -> torch.Tensor:
+    """Penalize ball horizontal motion *relative to the robot* — so dribbling
+    while walking forward at 1 m/s is NOT punished (ball moves with you),
+    but the ball squirting sideways out of reach IS punished."""
+    ball_vel_xy = env.scene["ball"].data.root_lin_vel_w[:, :2]
+    robot_vel_xy = env.scene["robot"].data.root_lin_vel_w[:, :2]
+    rel_vel = ball_vel_xy - robot_vel_xy
+    return torch.sum(torch.square(rel_vel), dim=-1)
+
+def ball_keeps_up_with_robot(env: BaseEnv, sigma: float = 0.4) -> torch.Tensor:
+    """Reward the ball having horizontal velocity close to the robot's.
+    Encourages the ball to travel with the robot when walking.
+    Returns 1 when ball stays synced with robot, 0 when ball is left behind."""
+    ball_vel_xy = env.scene["ball"].data.root_lin_vel_w[:, :2]
+    robot_vel_xy = env.scene["robot"].data.root_lin_vel_w[:, :2]
+    rel_vel_sq = torch.sum(torch.square(ball_vel_xy - robot_vel_xy), dim=-1)
+    # only meaningful when robot is actually moving
+    robot_speed = torch.norm(robot_vel_xy, dim=-1)
+    is_moving = (robot_speed > 0.2).float()
+    return torch.exp(-rel_vel_sq / (sigma ** 2)) * is_moving
+
+def ball_under_hand_active_tanh(env: BaseEnv, std: float = 0.15,
+                                 asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """track_hand, but only paid when the ball is actually in a dribble cycle
+    (above the floor or moving vertically). Stops the policy from harvesting
+    this reward by freezing with the hand in init pose."""
+    robot = env.scene["robot"]
+    ball = env.scene["ball"]
+
+    wrist_xy = robot.data.body_pos_w[:, asset_cfg.body_ids[0], :2]
+    ball_xy = ball.data.root_pos_w[:, :2]
+    dist_xy = torch.norm(wrist_xy - ball_xy, dim=-1)
+
+    ball_z = ball.data.root_pos_w[:, 2]
+    ball_vz = torch.abs(ball.data.root_lin_vel_w[:, 2])
+    is_dribbling = ((ball_z > 0.2) | (ball_vz > 0.3)).float()
+
+    return is_dribbling * (1.0 - torch.tanh(dist_xy / std))
+
+def penalize_stationary_when_far(env: BaseEnv, dist_threshold: float = 0.5,
+                                  speed_threshold: float = 0.15) -> torch.Tensor:
+    """Hard penalty for being still when there's still distance to cover.
+    This is what breaks the 'freeze' equilibrium."""
+    dist = torch.norm(env.command_generator.target_command, dim=-1)
+    speed = torch.norm(env.robot.data.root_lin_vel_w[:, :2], dim=-1)
+    is_far = (dist > dist_threshold).float()
+    is_slow = (speed < speed_threshold).float()
+    return is_far * is_slow
+
+def ball_bounce_activity_gated(env: BaseEnv, max_reward_vel: float = 3.0, xy_proximity: float = 0.25, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """bounce_activity, but ONLY paid when the dribbling hand is above the ball.
+    Kills the passive 'let the ball bounce itself out' exploit — the policy
+    now has to keep the ball alive under its hand to collect this reward."""
+    robot = env.scene["robot"]
+    ball = env.scene["ball"]
+    hand_xy = robot.data.body_pos_w[:, asset_cfg.body_ids[0], :2]
+    ball_xy = ball.data.root_pos_w[:, :2]
+    near = (torch.norm(hand_xy - ball_xy, dim=-1) < xy_proximity).float()
+    vel_z = torch.abs(ball.data.root_lin_vel_w[:, 2])
+    return near * torch.clamp(vel_z, max=max_reward_vel)
+
+def feet_too_far(env: BaseEnv, max_width: float = 0.40, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize an abnormally wide stance — kills the 'straddle the ball' gait.
+    Pairs with feet_too_near to keep stance width in a normal band."""
+    feet_xy = env.robot.data.body_pos_w[:, asset_cfg.body_ids, :2]
+    width = torch.norm(feet_xy[:, 0] - feet_xy[:, 1], dim=-1)
+    return torch.clamp(width - max_width, min=0.0)
+
+def upright_posture_exp(env: BaseEnv, target_height: float = 0.70, std: float = 0.12, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Reward keeping the pelvis at standing height — directly fights the
+    deep-crouch dribble stance. ~1.0 when upright, ~0 when folded down."""
+    asset = env.scene[asset_cfg.name]
+    base_h = asset.data.root_pos_w[:, 2] - env.scene.env_origins[:, 2]
+    err = torch.square(base_h - target_height)
+    return torch.exp(-err / std**2)
