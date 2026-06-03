@@ -60,23 +60,7 @@ class G1CrawlRewardCfg(RewardCfg):
         },
     )
 
-    crawl_fourbeat_swing_drag_penalty = RewTerm(
-        func=mdp.crawl_fourbeat_swing_drag_penalty,
-        weight=-1.0,
-        params={
-            "sensor_cfg": SceneEntityCfg(
-                "contact_sensor",
-                body_names=[
-                    "left_rubber_hand",
-                    "right_rubber_hand",
-                    "left.*knee.*",
-                    "right.*knee.*",
-                ],
-            ),
-            "period": 1.0,
-            "threshold": 1.0,
-        },
-    )
+
 
     hand_force_support = RewTerm(
         func=mdp.hand_force_support,
@@ -118,7 +102,7 @@ class G1CrawlRewardCfg(RewardCfg):
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_sensor",
-                body_names="(?!.*(knee|rubber_hand|ankle).*).*",
+                 body_names="(?!.*(rubber_hand|wrist|knee|ankle).*).*",
             ),
             "threshold": 1.0,
         },
@@ -197,17 +181,43 @@ class G1CrawlRewardCfg(RewardCfg):
     )
 
 
-    crawl_fourbeat_gait_phase = RewTerm(
-        func=mdp.crawl_fourbeat_gait_phase,
-        weight=2.5,
+    crawl_phase_aware_support_contacts = RewTerm(
+        func=mdp.crawl_phase_aware_support_contacts,
+        weight=2.0,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_sensor",
                 body_names=[
                     "left_rubber_hand",
                     "right_rubber_hand",
+                    "left.*wrist.*",
+                    "right.*wrist.*",
                     "left.*knee.*",
                     "right.*knee.*",
+                    "left.*ankle.*",
+                    "right.*ankle.*",
+                ],
+            ),
+            "period": 1.0,
+            "threshold": 1.0,
+        },
+    )
+
+    crawl_phase_aware_swing_contact_penalty = RewTerm(
+        func=mdp.crawl_phase_aware_swing_contact_penalty,
+        weight=-1.5,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_sensor",
+                body_names=[
+                    "left_rubber_hand",
+                    "right_rubber_hand",
+                    "left.*wrist.*",
+                    "right.*wrist.*",
+                    "left.*knee.*",
+                    "right.*knee.*",
+                    "left.*ankle.*",
+                    "right.*ankle.*",
                 ],
             ),
             "period": 1.0,
@@ -265,6 +275,40 @@ class G1CrawlRewardCfg(RewardCfg):
         },
     )
 
+    hand_wrist_contact_pair = RewTerm(
+        func=mdp.hand_wrist_contact_pair,
+        weight=0.8,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_sensor",
+                body_names=[
+                    "left_rubber_hand",
+                    "right_rubber_hand",
+                    "left.*wrist.*",
+                    "right.*wrist.*",
+                ],
+            ),
+            "threshold": 1.0,
+        },
+    )
+
+    knee_ankle_contact_pair = RewTerm(
+        func=mdp.knee_ankle_contact_pair,
+        weight=0.6,
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_sensor",
+                body_names=[
+                    "left.*knee.*",
+                    "right.*knee.*",
+                    "left.*ankle.*",
+                    "right.*ankle.*",
+                ],
+            ),
+            "threshold": 1.0,
+        },
+    )
+
 
 @configclass
 class G1CrawlFlatEnvCfg(BaseEnvCfg):
@@ -280,15 +324,13 @@ class G1CrawlFlatEnvCfg(BaseEnvCfg):
         self.scene.terrain_type = "generator"
         self.scene.terrain_generator = FLAT_TERRAINS_CFG
 
-        # These are the contact bodies used in critic contact obs.
-        # BaseEnv still calls this "feet_body_names", but for crawl we use knees + hands.
         self.robot.feet_body_names = [
-            ".*knee.*",
             ".*rubber_hand.*",
+            ".*wrist.*",
+            ".*knee.*",
+            ".*ankle.*",
         ]
 
-        # Terminate if torso/head/upper arms touch.
-        # Do NOT terminate on knees/wrists/hands.
         self.robot.terminate_contacts_body_names = [
             ".*torso.*",
             ".*head.*",
@@ -298,14 +340,11 @@ class G1CrawlFlatEnvCfg(BaseEnvCfg):
 
         self.domain_rand.events.add_base_mass.params["asset_cfg"].body_names = [".*torso.*"]
 
-        # Tight reset around crawl pose.
         self.domain_rand.events.reset_robot_joints.params["position_range"] = (0.9, 1.1)
         self.domain_rand.events.reset_base.params["pose_range"]["yaw"] = (0,0)
 
-        # Crawl height command. This remains in obs through the height-command env.
         self.commands.ranges.base_height = (1.0 * H0, 1.0 * H0)
 
-        # Start easy.
         self.commands.rel_standing_envs = 0.0
         self.commands.ranges.lin_vel_x = (0.10, 0.30)
         self.commands.ranges.lin_vel_y = (0.0, 0.0)
