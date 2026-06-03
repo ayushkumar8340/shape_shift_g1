@@ -14,6 +14,7 @@ from envs.base.base_env import BaseEnv
 from envs.base.base_env_config import BaseAgentCfg, BaseEnvCfg
 from envs.base.crouch_env import G1CrouchEnv
 from envs.base.knee_walk_env import G1KneeWalkEnv
+from envs.base.lift_env import G1LiftEnv
 from envs.g1.g1_config import (
     G1FlatAgentCfg,
     G1FlatEnvCfg,
@@ -35,6 +36,12 @@ from envs.g1.g1_knee_walk_config import(
     G1KneeWalkRoughAgentCfg
 
 )
+
+from envs.g1.g1_lift_config import (
+    G1LiftFlatEnvCfg,
+    G1LiftFlatAgentCfg
+)
+
 from utils.task_registry import task_registry
 
 task_registry.register("g1_flat", BaseEnv, G1FlatEnvCfg(), G1FlatAgentCfg())
@@ -43,3 +50,5 @@ task_registry.register("g1_rough", BaseEnv, G1RoughEnvCfg(), G1RoughAgentCfg())
 task_registry.register("g1_crouch_flat",G1CrouchEnv,G1CrouchFlatEnvCfg(),G1CrouchFlatAgentCfg())
 
 task_registry.register("g1_knee_walk_flat",G1KneeWalkEnv, G1KneeWalkFlatEnvCfg(), G1KneeWalkFlatAgentCfg())
+
+task_registry.register("g1_lift_flat", G1LiftEnv, G1LiftFlatEnvCfg(), G1LiftFlatAgentCfg())

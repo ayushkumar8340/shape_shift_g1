@@ -48,7 +48,7 @@ from .base_config import (
 class BaseEnvCfg:
     device: str = "cuda:0"
     scene: BaseSceneCfg = BaseSceneCfg(
-        max_episode_length_s=20.0,
+        max_episode_length_s=10.0,
         num_envs=4096,
         env_spacing=2.5,
         robot=MISSING,
@@ -134,14 +134,14 @@ class BaseEnvCfg:
                 func=mdp.reset_root_state_uniform,
                 mode="reset",
                 params={
-                    "pose_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5), "yaw": (-3.14, 3.14)},
+                    "pose_range": {"x": (0.0, 0.0), "y": (0.0, 0.0), "yaw": (0.0, 0.0)},
                     "velocity_range": {
-                        "x": (-0.5, 0.5),
-                        "y": (-0.5, 0.5),
-                        "z": (-0.5, 0.5),
-                        "roll": (-0.5, 0.5),
-                        "pitch": (-0.5, 0.5),
-                        "yaw": (-0.5, 0.5),
+                        "x": (0.0, 0.0),
+                        "y": (0.0, 0.0),
+                        "z": (0.0, 0.0),
+                        "roll": (0.0, 0.0),
+                        "pitch": (0.0, 0.0),
+                        "yaw": (0.0, 0.0),
                     },
                 },
             ),
@@ -149,7 +149,7 @@ class BaseEnvCfg:
                 func=mdp.reset_joints_by_scale,
                 mode="reset",
                 params={
-                    "position_range": (0.5, 1.5),
+                    "position_range": (0.0, 0.0),
                     "velocity_range": (0.0, 0.0),
                 },
             ),
@@ -205,7 +205,6 @@ class BaseAgentCfg(RslRlOnPolicyRunnerCfg):
     save_interval = 100
     experiment_name = ""
     run_name = ""
-    logger = "wandb"
     neptune_project = "shape_shift_g1"
     wandb_project = "shape_shift_g1"
     resume = False
