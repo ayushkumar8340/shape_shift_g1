@@ -22,6 +22,41 @@ def track_lin_vel_xy_yaw_frame_exp(
     lin_vel_error = torch.sum(torch.square(env.command_generator.command[:, :2] - vel_yaw[:, :2]), dim=1)
     return torch.exp(-lin_vel_error / std**2)
 
+def crawl_left_right_contact_balance(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    threshold: float = 1.0,
+) -> torch.Tensor:
+    contact_sensor = env.scene.sensors[sensor_cfg.name]
+    forces = contact_sensor.data.net_forces_w_history
+
+    contact = torch.max(
+        torch.norm(forces[:, :, sensor_cfg.body_ids], dim=-1),
+        dim=1,
+    )[0] > threshold
+
+    # expected order:
+    # [left_hand, right_hand, left_knee, right_knee]
+    left_contacts = contact[:, 0].float() + contact[:, 2].float()
+    right_contacts = contact[:, 1].float() + contact[:, 3].float()
+
+    return torch.square(left_contacts - right_contacts)
+
+
+def crawl_left_right_force_balance(
+    env,
+    sensor_cfg: SceneEntityCfg,
+) -> torch.Tensor:
+    contact_sensor = env.scene.sensors[sensor_cfg.name]
+    fz = torch.abs(contact_sensor.data.net_forces_w[:, sensor_cfg.body_ids, 2])
+
+    # expected order:
+    # [left_hand, right_hand, left_knee, right_knee]
+    left_force = fz[:, 0] + fz[:, 2]
+    right_force = fz[:, 1] + fz[:, 3]
+
+    total = left_force + right_force + 1e-6
+    return torch.abs(left_force - right_force) / total
 
 def track_ang_vel_z_world_exp(
     env: BaseEnv, std: float, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
@@ -592,6 +627,7 @@ def crawl_limb_slide(
     return torch.sum(torch.norm(body_vel_xy, dim=-1) * contact.float(), dim=1)
 
 
+# penalty for distance between the arms and knee
 def hand_knee_spacing(
     env,
     asset_cfg: SceneEntityCfg,

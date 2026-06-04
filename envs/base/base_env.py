@@ -379,6 +379,22 @@ class BaseEnv(VecEnv):
         actor_obs, critic_obs = self.compute_observations()
         self.extras["observations"] = {"critic": critic_obs}
 
+        # debug 
+        # if self.sim_step_counter % 100 == 0:
+        #     env_id = 0
+        #     root_pos = self.robot.data.root_pos_w[env_id, :2]
+        #     origin = self.scene.env_origins[env_id, :2]
+        #     dist = torch.norm(root_pos - origin)
+
+        #     cmd = self.command_generator.command[env_id]
+        #     vel_w = self.robot.data.root_lin_vel_w[env_id]
+
+        #     print(
+        #         f"dist={dist.item():.3f} | "
+        #         f"cmd_vx={cmd[0].item():.3f}, cmd_vy={cmd[1].item():.3f} | "
+        #         f"vel_w=({vel_w[0].item():.3f}, {vel_w[1].item():.3f}, {vel_w[2].item():.3f})"
+        #     )
+
         ## debug
         # if self.sim_step_counter == 100:
         #     self.print_body_axes(".*torso.*", env_id=0)
