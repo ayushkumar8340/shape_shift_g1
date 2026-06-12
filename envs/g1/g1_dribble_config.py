@@ -86,7 +86,7 @@ class G1DribbleRewardCfg:
     # --- Dribbling Mechanics ---
     track_hand = RewTerm(func=mdp.ball_under_hand_xy_tanh, weight=5.0, params={"asset_cfg": SceneEntityCfg("robot", body_names=[".*right_rubber_hand.*"])})
     bounce_activity = RewTerm(func=mdp.ball_bounce_activity, weight=10.0, params={"max_reward_vel": 3.0})
-    dribble_strike = RewTerm(func=mdp.dribble_strike,  weight=15.0, params={"asset_cfg": SceneEntityCfg("robot", body_names=[".*right_rubber_hand.*"])})
+    dribble_strike = RewTerm(func=mdp.dribble_strike,  weight=20.0, params={"asset_cfg": SceneEntityCfg("robot", body_names=[".*right_rubber_hand.*"])})
 
     # --- Dribbling Penalties ---
     pinning_penalty = RewTerm(
@@ -95,7 +95,7 @@ class G1DribbleRewardCfg:
         params={"asset_cfg": SceneEntityCfg("robot", body_names=[".*right_rubber_hand.*"])}
     )
     wild_dribbling = RewTerm(func=mdp.wild_dribbling, weight=-1.0, params={"speed_limit": 3.0})
-    ball_xy_drift = RewTerm(func=mdp.ball_xy_drift, weight=-2.0)
+    ball_xy_drift = RewTerm(func=mdp.ball_xy_drift, weight=-5.0)
 
     # --- Standard Penalties ---
     termination_penalty = RewTerm(func=mdp.is_terminated, weight=-200.0)
@@ -113,12 +113,20 @@ class G1DribbleRewardCfg:
     feet_on_ground = RewTerm(
         func=mdp.penalize_lifted_feet,
         weight=-200.0,
-        params={"asset_cfg": SceneEntityCfg("robot", body_names=[".*_ankle_.*"]), "max_height": 0.08}
+        params={"asset_cfg": SceneEntityCfg("robot", body_names=[".*_ankle_.*"]), "max_height": 0.05}
+    )
+    feet_slide = RewTerm(
+        func=mdp.feet_slide,
+        weight=-2.5,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_sensor", body_names=".*_ankle_.*"),
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*_ankle_.*"),
+        },
     )
     stand_still = RewTerm(
         func=mdp.joint_deviation_l1,
         weight=-20.0,  # -10.0
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*left_shoulder.*", ".*left_elbow.*", ".*left_wrist.*", ".*_hip_.*", ".*_knee_.*", ".*waist.*"])}
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names=[".*left_shoulder.*", ".*left_elbow.*", ".*left_wrist.*", ".*_hip_.*", ".*_knee_.*", ".*_ankle_.*", ".*waist.*"])}
     )
 
 @configclass
@@ -176,4 +184,3 @@ class G1DribbleFlatEnvCfg(BaseEnvCfg):
 @configclass
 class G1DribbleFlatAgentCfg(BaseAgentCfg):
     experiment_name: str = "g1_dribble_flat"
-    wandb_project: str = "g1_dribble_flat"

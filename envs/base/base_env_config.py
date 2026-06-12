@@ -205,9 +205,6 @@ class BaseAgentCfg(RslRlOnPolicyRunnerCfg):
     save_interval = 100
     experiment_name = ""
     run_name = ""
-    logger = "wandb"
-    neptune_project = "shape_shift_g1"
-    wandb_project = "shape_shift_g1"
     resume = False
     load_run = ".*"
     load_checkpoint = "model_.*.pt"
