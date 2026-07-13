@@ -155,3 +155,135 @@ class DribbleCommand:
 
         # 3. Combine them into a 6D command vector
         return torch.cat([rel_pos_local, rel_vel_local], dim=-1)
+
+
+class ThrowCommandCfg:
+    """Target sampling for the throw task.
+
+    The target is placed *in front of* the robot (in its yaw frame) at a random
+    distance / lateral offset / height. Defaults describe an elevated, hoop-like
+    target reachable with planted feet (the feet-pinned impulse caps the range;
+    widen back toward 5 m only once the hit rate saturates). For a target on
+    the ground set ``height = (0.0, 0.0)``.
+    """
+
+    class Ranges:
+        distance = (2.0, 4.0)   # forward distance from the robot (m)
+        lateral = (-1.0, 1.0)   # left/right offset (m)
+        height = (1.0, 1.8)     # world height of the target (m); (0.0, 0.0) -> ground
+
+    ranges = Ranges()
+
+
+class ThrowCommand:
+    """Command / observation provider for the throw task.
+
+    The exposed ``command`` is everything the policy needs about the task, all
+    vectors in the robot **root frame** (per the task spec):
+
+        [ target_rel(3) | ball_rel_pos(3) | ball_rel_vel(3)
+          | ball_to_left_hand(3) | ball_to_right_hand(3)
+          | left_contact(1) | right_contact(1)
+          | set_done(1) | released(1) | thrown(1)
+          | countdown_frac(1) | budget(1) ]  -> 22D
+
+    The per-hand ball vectors are the dense manipulation signal (without them
+    the actor would have to infer palm placement through 29 joint angles); the
+    contact bits are obs-only PhysX force readings (never used in rewards or
+    latches, so flicker can't break the task); the three phase latches make the
+    phase-switched reward menu Markov; countdown_frac lets the critic value the
+    shrinking post-throw stabilization annuity; budget exposes the pre-set
+    shaping decay clock (otherwise the 125-175-step ramp is invisible to the
+    critic and inflates advantage variance exactly where the raise must be
+    learned).
+
+    The world-frame target (``target_pos_w``) is kept around for the reward
+    functions, which need it to decide whether the ball reached the target.
+    """
+
+    def __init__(self, cfg, env):
+        self.cfg = cfg
+        self.env = env
+        self.device = env.device
+        self.num_envs = env.num_envs
+        self.target_pos_w = torch.zeros((self.num_envs, 3), device=self.device)
+
+    def _uniform(self, n: int, lo: float, hi: float):
+        return lo + (hi - lo) * torch.rand(n, device=self.device)
+
+    def resample(self, env_ids):
+        robot = self.env.robot
+        root_pos = robot.data.root_pos_w[env_ids]
+        root_quat = robot.data.root_quat_w[env_ids]
+
+        w, x, y, z = root_quat[:, 0], root_quat[:, 1], root_quat[:, 2], root_quat[:, 3]
+        yaw = torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+        n = len(env_ids)
+        r = self.cfg.ranges
+        dist = self._uniform(n, *r.distance)
+        lat = self._uniform(n, *r.lateral)
+        height = self._uniform(n, *r.height)
+
+        self.target_pos_w[env_ids, 0] = root_pos[:, 0] + dist * torch.cos(yaw) - lat * torch.sin(yaw)
+        self.target_pos_w[env_ids, 1] = root_pos[:, 1] + dist * torch.sin(yaw) + lat * torch.cos(yaw)
+        self.target_pos_w[env_ids, 2] = self.env.scene.env_origins[env_ids, 2] + height
+
+    def reset(self, env_ids=None):
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=self.device)
+        self.resample(env_ids)
+
+    def compute(self, dt: float):
+        """Static target - nothing to update per step."""
+        pass
+
+    @property
+    def command(self):
+        env = self.env
+        robot = env.robot
+        root_pos = robot.data.root_pos_w
+        root_quat = robot.data.root_quat_w
+        ball = env.scene["ball"]
+        ball_pos = ball.data.root_pos_w
+
+        target_rel_b = math_utils.quat_rotate_inverse(root_quat, self.target_pos_w - root_pos)
+        ball_rel_b = math_utils.quat_rotate_inverse(root_quat, ball_pos - root_pos)
+        ball_vel_b = math_utils.quat_rotate_inverse(root_quat, ball.data.root_lin_vel_w)
+
+        lh = robot.data.body_pos_w[:, env.left_hand_id]
+        rh = robot.data.body_pos_w[:, env.right_hand_id]
+        ball_lh_b = math_utils.quat_rotate_inverse(root_quat, ball_pos - lh)
+        ball_rh_b = math_utils.quat_rotate_inverse(root_quat, ball_pos - rh)
+
+        forces = env.contact_sensor.data.net_forces_w_history
+        left_contact = (
+            torch.norm(forces[:, :, env.left_hand_contact_id], dim=-1).max(dim=1).values > 1.0
+        ).float().unsqueeze(-1)
+        right_contact = (
+            torch.norm(forces[:, :, env.right_hand_contact_id], dim=-1).max(dim=1).values > 1.0
+        ).float().unsqueeze(-1)
+
+        set_done = env.set_done.float().unsqueeze(-1)
+        released = env.released.float().unsqueeze(-1)
+        thrown = env.thrown.float().unsqueeze(-1)
+        countdown_frac = (env.stabilize_counter.float() / env.stabilize_steps).unsqueeze(-1)
+        budget = env.pre_set_budget().unsqueeze(-1)
+
+        return torch.cat(
+            [
+                target_rel_b,
+                ball_rel_b,
+                ball_vel_b,
+                ball_lh_b,
+                ball_rh_b,
+                left_contact,
+                right_contact,
+                set_done,
+                released,
+                thrown,
+                countdown_frac,
+                budget,
+            ],
+            dim=-1,
+        )

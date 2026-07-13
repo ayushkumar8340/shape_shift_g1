@@ -4,11 +4,10 @@ from mdp.command_gen import DribbleCommand, DribbleCommandCfg
 from utils.env_utils.scene import SceneCfg
 from envs.g1.g1_dribble_config import BASKETBALL_CFG
 
-# Register the basketball into the custom scene wrapper
-SceneCfg.ball = BASKETBALL_CFG
 
 class G1DribbleEnv(BaseEnv):
     def __init__(self, cfg, headless):
+        SceneCfg.ball = BASKETBALL_CFG
         super().__init__(cfg, headless)
 
     def _create_command_generator(self):

@@ -245,6 +245,7 @@ class BaseEnv(VecEnv):
             self.event_manager.apply(mode="interval", dt=self.step_dt)
 
         self.reset_buf, self.time_out_buf = self.check_reset()
+        self.extras["time_outs"] = self.time_out_buf
         reward_buf = self.reward_manager.compute(self.step_dt)
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         self.reset(env_ids)

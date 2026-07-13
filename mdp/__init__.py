@@ -16,3 +16,4 @@ from isaaclab.envs.mdp import *
 from .rewards import *
 from .command_gen import *
 from .crouch_walk_rewards import *
+from .throw_rewards import *
