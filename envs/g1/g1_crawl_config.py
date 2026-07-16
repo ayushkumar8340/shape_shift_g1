@@ -31,13 +31,6 @@ class G1CrawlRewardCfg(RewardCfg):
         params={"std": 0.5},
     )
 
-    # track_base_height_exp = RewTerm(
-    #     func=mdp.track_base_height_exp,
-    #     weight=0.5,
-    #     params={"std": 0.05},
-    # )
-
-
     lin_vel_z_l2 = RewTerm(
         func=mdp.lin_vel_z_l2,
         weight=-1.0,
@@ -197,51 +190,6 @@ class G1CrawlRewardCfg(RewardCfg):
             )
         },
     )
-
-
-    # crawl_phase_aware_support_contacts = RewTerm(
-    #     func=mdp.crawl_phase_aware_support_contacts,
-    #     weight=2.0,
-    #     params={
-    #         "sensor_cfg": SceneEntityCfg(
-    #             "contact_sensor",
-    #             body_names=[
-    #                 "left_rubber_hand",
-    #                 "right_rubber_hand",
-    #                 "left.*wrist.*",
-    #                 "right.*wrist.*",
-    #                 "left.*knee.*",
-    #                 "right.*knee.*",
-    #                 "left.*ankle.*",
-    #                 "right.*ankle.*",
-    #             ],
-    #         ),
-    #         "period": 1.0,
-    #         "threshold": 1.0,
-    #     },
-    # )
-
-    # crawl_phase_aware_swing_contact_penalty = RewTerm(
-    #     func=mdp.crawl_phase_aware_swing_contact_penalty,
-    #     weight=-1.5,
-    #     params={
-    #         "sensor_cfg": SceneEntityCfg(
-    #             "contact_sensor",
-    #             body_names=[
-    #                 "left_rubber_hand",
-    #                 "right_rubber_hand",
-    #                 "left.*wrist.*",
-    #                 "right.*wrist.*",
-    #                 "left.*knee.*",
-    #                 "right.*knee.*",
-    #                 "left.*ankle.*",
-    #                 "right.*ankle.*",
-    #             ],
-    #         ),
-    #         "period": 1.0,
-    #         "threshold": 1.0,
-    #     },
-    # )
 
     crawl_contact_count_penalty = RewTerm(
         func=mdp.crawl_contact_count_penalty,
