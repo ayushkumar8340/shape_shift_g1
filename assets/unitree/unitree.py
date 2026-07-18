@@ -170,6 +170,43 @@ G1_CFG = ArticulationCfg(
 )
 
 
+G1_DRIBBLE_CFG = G1_CFG.replace(
+    init_state=G1_CFG.init_state.replace(
+        joint_pos={
+            "left_hip_pitch_joint": 0.000,
+            "right_hip_pitch_joint": 0.000,
+            "waist_yaw_joint": 0.000,
+            "left_hip_roll_joint": 0.000,
+            "right_hip_roll_joint": 0.000,
+            "waist_roll_joint": 0.000,
+            "left_hip_yaw_joint": 0.000,
+            "right_hip_yaw_joint": 0.000,
+            "waist_pitch_joint": 0.000,
+            "left_knee_joint": 0.000,
+            "right_knee_joint": 0.000,
+            "left_shoulder_pitch_joint": 0.000,
+            "right_shoulder_pitch_joint": -0.500,
+            "left_ankle_pitch_joint": 0.000,
+            "right_ankle_pitch_joint": 0.000,
+            "left_shoulder_roll_joint": 0.150,
+            "right_shoulder_roll_joint": -0.150,
+            "left_ankle_roll_joint": 0.000,
+            "right_ankle_roll_joint": 0.000,
+            "left_shoulder_yaw_joint": 0.000,
+            "right_shoulder_yaw_joint": 0.000,
+            "left_elbow_joint": 1.500,
+            "right_elbow_joint": 0.400,
+            "left_wrist_roll_joint": 0.000,
+            "right_wrist_roll_joint": -1.400,
+            "left_wrist_pitch_joint": 0.000,
+            "right_wrist_pitch_joint": 0.000,
+            "left_wrist_yaw_joint": 0.000,
+            "right_wrist_yaw_joint": 0.000,
+        },
+    )
+)
+
+
 G1_KNEE_WALK_CFG = G1_CFG.replace(
     init_state=G1_CFG.init_state.replace(
         pos=(0.0, 0.0, 0.68),  

@@ -309,17 +309,16 @@ class BaseEnv(VecEnv):
 
         #     forces = self.contact_sensor.data.net_forces_w_history
 
-        #     for env_id in env_ids[:5]:  # limit prints
-        #         contact_forces = torch.norm(forces[env_id, :, body_ids], dim=-1)
-        #         max_force_per_body = torch.max(contact_forces, dim=0)[0]
-
+        #     for env_id in env_ids[:5]:
+        #         contact_forces = torch.norm(forces[env_id][:, body_ids], dim=-1)   # index env FIRST -> (T, K, 3) -> (T, K)
+        #         max_force_per_body = torch.max(contact_forces, dim=0)[0]           # (K,) — per body, max over history
         #         triggered = max_force_per_body > 1.0
-
+        #         sensor_names = self.contact_sensor.body_names                      # sensor's own ordering
         #         if torch.any(triggered):
         #             print(f"\n[TERMINATION] env {env_id.item()}")
         #             for i, flag in enumerate(triggered):
         #                 if flag:
-        #                     print(f"  -> {body_names[i]} | force={max_force_per_body[i].item():.3f}")
+        #                     print(f"  -> {sensor_names[body_ids[i]]} | force={max_force_per_body[i].item():.3f}")
         return reset_buf, time_out_buf
 
     def init_obs_buffer(self):

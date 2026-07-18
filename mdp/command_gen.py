@@ -123,58 +123,40 @@ class TargetPositionCommand:
         return heading_err.unsqueeze(-1)
 
 
-class DribbleCommandCfg:
-    pass
-
-class DribbleCommand:
-    def __init__(self, cfg, env):
-        self.cfg = cfg
-        self.env = env
-        self.device = env.device
-        self.num_envs = env.num_envs
-
-    def reset(self, env_ids=None):
-        pass
-
-    def compute(self, dt: float):
-        pass
-
-    @property
-    def command(self):
-        """Returns [dx, dy, dz, vx, vy, vz] of the ball in the robot's local frame."""
-        ball = self.env.scene["ball"]
-        robot = self.env.scene["robot"]
-
-        # 1. Relative Position
-        rel_pos_w = ball.data.root_pos_w - robot.data.root_pos_w
-        rel_pos_local = math_utils.quat_rotate_inverse(robot.data.root_quat_w, rel_pos_w)
-
-        # 2. Relative Velocity
-        rel_vel_w = ball.data.root_lin_vel_w
-        rel_vel_local = math_utils.quat_rotate_inverse(robot.data.root_quat_w, rel_vel_w)
-
-        # 3. Combine them into a 6D command vector
-        return torch.cat([rel_pos_local, rel_vel_local], dim=-1)
-
-
-@configclass
-class WalkDribbleCommandRangesCfg:
-    pos_x: tuple = (0.8, 2.0)   # always force a real walk
-    pos_y: tuple = (-0.8, 0.8)
-
 @configclass
 class WalkDribbleCommandCfg:
-    ranges: WalkDribbleCommandRangesCfg = WalkDribbleCommandRangesCfg()
-    resampling_time_range: tuple = (6.0, 10.0)
-    rel_standing_envs: float = 0.0
+    lin_vel_x: tuple = (0.0, 0.8)
+    lin_vel_y: tuple = (-0.2, 0.2)
+    ang_vel_z: tuple = (-0.5, 0.5)
+    min_moving_speed: float = 0.3
+    resampling_time_range: tuple = (5.0, 8.0)
+
+    # Curriculum with WARMUP HOLD: level stays 0 (=> all envs standing, zero commands)
+    # for warmup_steps policy steps so the dribble locks in first, then ramps linearly
+    # to 1 over ramp_steps. 60000 steps ~= 2500 iters @ 24 steps/iter.
+    standing_frac_start: float = 1.0
+    standing_frac_end: float = 0.25    # <-- 1.0 = pure static dribble (golden state)
+    warmup_steps: int = 60000
+    ramp_steps: int = 96000
+    # Fresh training: -1.0 = warmup curriculum active (dribble first, then walking ramp. Resume: 1.0.
+    fixed_level: float = -1.0
+    standing_speed_eps: float = 0.15   # |cmd| below this counts as "standing" for reward gating
+    gait_freq: float = 1.2   # full gait cycles per second
+    gait_duty: float = 0.55  # stance fraction per foot
+
 
 class WalkDribbleCommand:
-    """Combined command for walk-to-target + dribble.
+    """Velocity command + ball state + gait clock for the dribble->walk task.
 
-    command (8D, robot local frame):
-        [0:2] target dx, dy  (delta to walk target)
-        [2:5] ball dx, dy, dz
-        [5:8] ball vx, vy, vz
+    Observation command (11D, robot frame):
+        [0:3] ball dx,dy,dz   [3:6] ball vx,vy,vz   [6:9] commanded vx,vy,yaw_rate
+        [9:11] gait clock sin(2*pi*phi), cos(2*pi*phi)
+
+    Each env is assigned a regime ONCE per episode via the standing fraction
+    (warmup-hold curriculum). Standing envs get a zero command (pure dribble in
+    place, the proven golden behavior); movers get a floored forward command
+    (>= min_moving_speed). `is_standing` and `expected_stance` are exposed for
+    the reward functions.
     """
 
     def __init__(self, cfg, env):
@@ -182,72 +164,85 @@ class WalkDribbleCommand:
         self.env = env
         self.device = env.device
         self.num_envs = env.num_envs
-        self.target_pos_w = torch.zeros((self.num_envs, 3), device=self.device)
+        self.vel_command = torch.zeros(self.num_envs, 3, device=self.device)
+        self.is_standing = torch.ones(self.num_envs, device=self.device, dtype=torch.bool)
+        self._forced_standing = torch.ones(self.num_envs, device=self.device, dtype=torch.bool)
+        self.gait_phase = torch.rand(self.num_envs, device=self.device)
         self._time_left = torch.zeros(self.num_envs, device=self.device)
+        self._steps = 0
+
+    @property
+    def level(self) -> float:
+        if self.cfg.fixed_level >= 0.0:
+            return float(self.cfg.fixed_level)
+        return min(1.0, max(0.0, (self._steps - self.cfg.warmup_steps) / max(1, self.cfg.ramp_steps)))
 
     def _sample_resample_time(self, n: int):
         lo, hi = self.cfg.resampling_time_range
         return lo + (hi - lo) * torch.rand(n, device=self.device)
 
-    def resample(self, env_ids: torch.Tensor):
+    def _uniform(self, n: int, lo: float, hi: float):
+        return lo + (hi - lo) * torch.rand(n, device=self.device)
+
+    def resample(self, env_ids: torch.Tensor, redraw_regime: bool = True):
         n = env_ids.numel()
-        r = self.cfg.ranges
-        current_pos = self.env.robot.data.root_pos_w[env_ids]
+        L = self.level
+        r = self.cfg
 
-        rand_x = torch.rand(n, device=self.device) * (r.pos_x[1] - r.pos_x[0]) + r.pos_x[0]
-        rand_y = torch.rand(n, device=self.device) * (r.pos_y[1] - r.pos_y[0]) + r.pos_y[0]
+        if redraw_regime:
+            standing_frac = r.standing_frac_start + (r.standing_frac_end - r.standing_frac_start) * L
+            self._forced_standing[env_ids] = torch.rand(n, device=self.device) < standing_frac
 
-        # standing envs: target = current pose -> "stay and dribble"
-        if self.cfg.rel_standing_envs > 0.0:
-            standing = torch.rand(n, device=self.device) < self.cfg.rel_standing_envs
-            rand_x[standing] = 0.0
-            rand_y[standing] = 0.0
+        forced_standing = self._forced_standing[env_ids]
 
-        self.target_pos_w[env_ids, 0] = current_pos[:, 0] + rand_x
-        self.target_pos_w[env_ids, 1] = current_pos[:, 1] + rand_y
-        self.target_pos_w[env_ids, 2] = 0.0
+        vx = self._uniform(n, r.min_moving_speed, r.min_moving_speed + (r.lin_vel_x[1] - r.min_moving_speed) * L)
+        vy = self._uniform(n, r.lin_vel_y[0] * L, r.lin_vel_y[1] * L)
+        yaw = self._uniform(n, r.ang_vel_z[0] * L, r.ang_vel_z[1] * L)
+
+        vx[forced_standing] = 0.0
+        vy[forced_standing] = 0.0
+        yaw[forced_standing] = 0.0
+
+        self.vel_command[env_ids, 0] = vx
+        self.vel_command[env_ids, 1] = vy
+        self.vel_command[env_ids, 2] = yaw
+
+        cmd_mag = torch.norm(self.vel_command[env_ids], dim=-1)
+        self.is_standing[env_ids] = forced_standing | (cmd_mag < r.standing_speed_eps)
 
     def reset(self, env_ids=None):
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, device=self.device)
-        self.resample(env_ids)
+        if len(env_ids) == 0:
+            return
+        self.resample(env_ids, redraw_regime=True)
         self._time_left[env_ids] = self._sample_resample_time(env_ids.numel())
+        self.gait_phase[env_ids] = torch.rand(len(env_ids), device=self.device)
 
     def compute(self, dt: float):
+        self._steps += 1
+        self.gait_phase = (self.gait_phase + dt * self.cfg.gait_freq) % 1.0
         self._time_left -= dt
         env_ids = torch.nonzero(self._time_left <= 0.0, as_tuple=False).flatten()
         if env_ids.numel() > 0:
-            self.resample(env_ids)
+            self.resample(env_ids, redraw_regime=False)
             self._time_left[env_ids] = self._sample_resample_time(env_ids.numel())
 
     @property
-    def target_command(self) -> torch.Tensor:
-        """2D target delta in robot local frame (for reward functions)."""
-        root_pos = self.env.robot.data.root_pos_w
-        root_quat = self.env.robot.data.root_quat_w
-        rel_w = self.target_pos_w - root_pos
-        return math_utils.quat_rotate_inverse(root_quat, rel_w)[:, :2]
+    def expected_stance(self) -> torch.Tensor:
+        duty = self.cfg.gait_duty
+        left = torch.frac(self.gait_phase) < duty
+        right = torch.frac(self.gait_phase + 0.5) < duty
+        return torch.stack([left, right], dim=-1)
 
     @property
     def command(self) -> torch.Tensor:
-        """8D command vector that goes into the policy observation."""
         robot = self.env.scene["robot"]
         ball = self.env.scene["ball"]
 
         root_pos = robot.data.root_pos_w
         root_quat = robot.data.root_quat_w
-
-        rel_target_w = self.target_pos_w - root_pos
-        rel_target_local = math_utils.quat_rotate_inverse(root_quat, rel_target_w)[:, :2]
-
-        rel_ball_pos_w = ball.data.root_pos_w - root_pos
-        rel_ball_pos_local = math_utils.quat_rotate_inverse(root_quat, rel_ball_pos_w)
-
-        rel_ball_vel_w = ball.data.root_lin_vel_w
-        rel_ball_vel_local = math_utils.quat_rotate_inverse(root_quat, rel_ball_vel_w)
-
-        return torch.cat([rel_target_local, rel_ball_pos_local, rel_ball_vel_local], dim=-1)
-
-    def get_heading_error(self) -> torch.Tensor:
-        rel = self.target_command
-        return torch.atan2(rel[:, 1], rel[:, 0]).unsqueeze(-1)
+        rel_ball_pos = math_utils.quat_rotate_inverse(root_quat, ball.data.root_pos_w - root_pos)
+        rel_ball_vel = math_utils.quat_rotate_inverse(root_quat, ball.data.root_lin_vel_w)
+        two_pi_phi = 2.0 * math.pi * self.gait_phase
+        return torch.cat([rel_ball_pos, rel_ball_vel, self.vel_command, torch.sin(two_pi_phi).unsqueeze(-1), torch.cos(two_pi_phi).unsqueeze(-1)], dim=-1)

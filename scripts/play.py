@@ -53,13 +53,26 @@ def play():
 
     env_cfg.noise.add_noise = False
     env_cfg.domain_rand.events.push_robot = None
-    env_cfg.scene.max_episode_length_s = 40.0
+    env_cfg.scene.max_episode_length_s = 5.0
     env_cfg.scene.num_envs = 50
     env_cfg.scene.env_spacing = 2.5
     env_cfg.commands.ranges.lin_vel_x = (0.6, 0.6)
     env_cfg.commands.ranges.lin_vel_y = (0.0, 0.0)
     env_cfg.commands.ranges.heading = (0.0, 0.0)
     env_cfg.scene.height_scanner.drift_range = (0.0, 0.0)
+
+    # 1.0 for pure stand-and-dribble, 0.0 for pure walk-and-dribble.
+    if hasattr(env_cfg.commands, "rel_standing_envs"):
+        env_cfg.commands.rel_standing_envs = 0.3
+
+    # 0.0 for pure stand-and-dribble, 1.0 for full trained walk+dribble mix
+    if hasattr(env_cfg, "dribble_walk_command") and hasattr(env_cfg.dribble_walk_command, "fixed_level"):
+        env_cfg.dribble_walk_command.fixed_level = 1.0
+        # STRAIGHT-WALK EVAL: zero out lateral/turn commands so movers walk straight ahead
+        # Comment these three lines to watch turning.
+        # env_cfg.dribble_walk_command.lin_vel_x = (0.0, 0.6)
+        # env_cfg.dribble_walk_command.lin_vel_y = (0.0, 0.0)
+        # env_cfg.dribble_walk_command.ang_vel_z = (0.0, 0.0)
 
     # env_cfg.scene.terrain_generator = None
     # env_cfg.scene.terrain_type = "plane"

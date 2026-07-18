@@ -14,7 +14,6 @@ from envs.base.base_env import BaseEnv
 from envs.base.base_env_config import BaseAgentCfg, BaseEnvCfg
 from envs.base.crouch_env import G1CrouchEnv
 from envs.base.knee_walk_env import G1KneeWalkEnv
-from envs.base.dribble_env import G1DribbleEnv
 from envs.base.walk_dribble_env import G1WalkDribbleEnv
 
 from envs.g1.g1_config import (
@@ -38,10 +37,6 @@ from envs.g1.g1_knee_walk_config import(
     G1KneeWalkRoughAgentCfg
 
 )
-from envs.g1.g1_dribble_config import(
-    G1DribbleFlatEnvCfg,
-    G1DribbleFlatAgentCfg
-)
 
 from envs.g1.g1_walk_dribble_config import (
     G1WalkDribbleFlatEnvCfg, G1WalkDribbleFlatAgentCfg,
@@ -55,7 +50,5 @@ task_registry.register("g1_rough", BaseEnv, G1RoughEnvCfg(), G1RoughAgentCfg())
 task_registry.register("g1_crouch_flat",G1CrouchEnv,G1CrouchFlatEnvCfg(),G1CrouchFlatAgentCfg())
 
 task_registry.register("g1_knee_walk_flat",G1KneeWalkEnv, G1KneeWalkFlatEnvCfg(), G1KneeWalkFlatAgentCfg())
-
-task_registry.register("g1_dribble_flat", G1DribbleEnv, G1DribbleFlatEnvCfg(), G1DribbleFlatAgentCfg())
 
 task_registry.register( "g1_walk_dribble_flat", G1WalkDribbleEnv, G1WalkDribbleFlatEnvCfg(), G1WalkDribbleFlatAgentCfg())

@@ -85,3 +85,6 @@ class SceneCfg(InteractiveSceneCfg):
                 update_period=step_dt,
                 drift_range=config.height_scanner.drift_range,
             )
+
+        if getattr(config, "ball", None) is not None:
+            self.ball = config.ball
